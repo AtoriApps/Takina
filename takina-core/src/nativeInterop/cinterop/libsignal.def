@@ -1,0 +1,3 @@
+language = C
+package = libsignal
+headers = libsignal/session_builder.h libsignal/signal_protocol.h libsignal/key_helper.h libsignal/session_cipher.h libsignal/protocol.h

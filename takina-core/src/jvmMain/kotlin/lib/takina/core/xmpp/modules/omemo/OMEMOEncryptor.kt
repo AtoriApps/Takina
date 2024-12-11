@@ -1,0 +1,273 @@
+package lib.takina.core.xmpp.modules.omemo
+
+import korlibs.crypto.encoding.hex
+import org.whispersystems.curve25519.NoSuchProviderException
+import org.whispersystems.libsignal.*
+import org.whispersystems.libsignal.protocol.PreKeySignalMessage
+import org.whispersystems.libsignal.protocol.SignalMessage
+import lib.takina.core.exceptions.TakinaException
+import lib.takina.core.fromBase64
+import lib.takina.core.logger.LoggerFactory
+import lib.takina.core.toBase64
+import lib.takina.core.xml.Element
+import lib.takina.core.xml.element
+import lib.takina.core.xmpp.modules.mix.getMixAnnotation
+import lib.takina.core.xmpp.stanzas.Message
+import lib.takina.core.xmpp.toBareJID
+import java.nio.charset.Charset
+import java.security.*
+import java.security.InvalidKeyException
+import java.security.spec.AlgorithmParameterSpec
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.NoSuchPaddingException
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+/**
+ * XEP-0454 helper.
+ */
+actual object OMEMOEncryptor {
+
+    private val log = LoggerFactory.logger("lib.takina.core.xmpp.modules.omemo.OMEMOEncryptor")
+
+   private const val CIPHER_NAME: String = "AES/GCM/NoPadding"
+   private const val ALGORITHM_NAME: String = "AES"
+   private const val KEY_SIZE = 128
+
+    private val rnd = SecureRandom()
+
+    @Throws(NoSuchAlgorithmException::class)
+     fun generateKey(): ByteArray {
+        val generator = KeyGenerator.getInstance(ALGORITHM_NAME)
+        generator.init(KEY_SIZE)
+        return generator.generateKey().encoded
+    }
+
+     fun generateIV(): ByteArray {
+        val iv = ByteArray(12)
+        rnd.nextBytes(iv)
+        return iv
+    }
+
+    @Throws(
+        NoSuchPaddingException::class,
+        NoSuchAlgorithmException::class,
+        NoSuchProviderException::class,
+        InvalidAlgorithmParameterException::class,
+        InvalidKeyException::class
+    )
+    private fun cipherInstance(mode: Int, secretKey: SecretKeySpec, iv: ByteArray): Cipher {
+        val cipher = Cipher.getInstance(CIPHER_NAME)
+
+        val ivSpec: AlgorithmParameterSpec = GCMParameterSpec(128, iv)
+        cipher.init(mode, secretKey, ivSpec)
+        return cipher
+    }
+
+    private fun checkPotentialKey(
+        senderAddr: SignalProtocolAddress,
+        store: SignalProtocolStore,
+        session: OMEMOSession,
+        keyElement: Element
+    ): ByteArray? {
+        try {
+            if (keyElement.attributes["rid"]?.toInt() != session.localRegistrationId) return null
+
+            val preKey = keyElement.attributes["prekey"] in listOf("1", "true")
+            val encryptedKey = keyElement.value?.fromBase64() ?: throw TakinaException("Cannot decode key")
+
+            val sessionCipher =
+                session.ciphers[senderAddr] ?: let {
+                    SessionCipher(store, senderAddr)
+                }
+            val key = if (preKey) {
+                sessionCipher.decrypt(PreKeySignalMessage(encryptedKey))
+            } else {
+                sessionCipher.decrypt(SignalMessage(encryptedKey))
+            }
+            session.ciphers[senderAddr] = sessionCipher
+            return key
+        } catch (e: InvalidVersionException) {
+            return null
+        } catch (e: InvalidKeyException) {
+            return null
+        } catch (e: LegacyMessageException) {
+            return null
+        } catch (e: InvalidMessageException) {
+            return null
+        } catch (e: DuplicateMessageException) {
+            return null
+        } catch (e: InvalidKeyIdException) {
+            return null
+        } catch (e: UntrustedIdentityException) {
+            return null
+
+        }
+    }
+
+    data class DecryptedKey(val key: ByteArray, val isPreKey: Boolean) {}
+
+    private fun retrieveKey(
+        keyElements: List<Element>,
+        senderAddr: SignalProtocolAddress,
+        store: SignalProtocolStore,
+        session: OMEMOSession
+    ): DecryptedKey? {
+        val iterator = keyElements.filter { it.attributes["rid"]?.toInt() == session.localRegistrationId }.iterator()
+        val sessionCipher =
+            session.ciphers[senderAddr] ?: let {
+                SessionCipher(store, senderAddr)
+            }
+        while (iterator.hasNext()) {
+            val keyElement = iterator.next()
+            val preKey = keyElement.attributes["prekey"] in listOf("1", "true")
+            val encryptedKey = keyElement.value?.fromBase64() ?: continue
+
+            if (preKey) {
+                val msg = PreKeySignalMessage(encryptedKey)
+                try {
+                    return DecryptedKey(sessionCipher.decrypt(msg), true)
+                } catch (e: Exception) {
+                    log.fine(e, { "failed to decrypt prekey ${keyElement.attributes["rid"]} from ${senderAddr}" })
+                    if (iterator.hasNext()) {
+                        continue
+                    }
+                    throw OMEMOException("Cannot decrypt OMEMO message.", e)
+                }
+            } else {
+                val msg = SignalMessage(encryptedKey)
+                try {
+                    return DecryptedKey(sessionCipher.decrypt(msg), false)
+                } catch (e: Exception) {
+                    log.fine(e, { "failed to decrypt key ${keyElement.attributes["rid"]} from ${senderAddr}" })
+                    // should we try to heal sessions?
+//                    if (e is InvalidMessageException || e is NoSessionException) {
+//                        // we need to try to recover
+//                        healSession(senderAddr);
+//                    }
+                    if (iterator.hasNext()) {
+                        continue
+                    }
+                    throw OMEMOException("Cannot decrypt OMEMO message.", e)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun findKeyElements(encElement: Element): List<Element> =
+        encElement.getFirstChild("header")?.getChildren("key") ?: emptyList()
+    
+    actual fun decrypt(store: SignalProtocolStore, session: OMEMOSession, stanza: Message): Pair<Message,Boolean> {
+        try {
+            val myAddr = SignalProtocolAddress(session.localJid.toString(), session.localRegistrationId)
+            val encElement =
+                stanza.getChildrenNS("encrypted", OMEMOModule.XMLNS) ?: throw TakinaException("No enc element")
+            val senderId = encElement.getFirstChild("header")?.attributes?.get("sid")?.toInt()
+                ?: throw TakinaException("No sid attribute element")
+
+            val senderAddr = SignalProtocolAddress((stanza.getMixAnnotation()?.jid ?: stanza.attributes["from"]!!.toBareJID()).toString(), senderId)
+            val iv = encElement.getFirstChild("header")?.getFirstChild("iv")?.value?.fromBase64()
+                ?: throw TakinaException("No IV element")
+            var ciphertext = encElement.getFirstChild("payload")?.value?.fromBase64() ?: ByteArray(0)
+
+            // extracting inner key
+            val decryptedKey = try {
+                retrieveKey(findKeyElements(encElement), senderAddr, store, session)
+            } catch (e: OMEMOException) {
+                log.warning(e) { "Cannot retrieve key" }
+                stanza.replaceBody("Cannot decrypt message.")
+                return OMEMOMessage.Error(stanza, OMEMOErrorCondition.CannotDecrypt) to false
+            }
+
+            if (decryptedKey == null) {
+                stanza.replaceBody("Message is not encrypted for this device.")
+                return OMEMOMessage.Error(stanza, OMEMOErrorCondition.DeviceKeyNotFound) to false
+            }
+
+            var key = decryptedKey.key;
+            if (key.size >= 32) {
+                val authtaglength = key.size - 16
+                val newCipherText = ByteArray(key.size - 16 + ciphertext.size)
+                val newKey = ByteArray(16)
+
+                System.arraycopy(ciphertext, 0, newCipherText, 0, ciphertext.size)
+                System.arraycopy(key, 16, newCipherText, ciphertext.size, authtaglength)
+                System.arraycopy(key, 0, newKey, 0, newKey.size)
+
+                ciphertext = newCipherText
+                key = newKey
+            }
+
+            val keySpec = SecretKeySpec(key, ALGORITHM_NAME)
+            val cipher = cipherInstance(Cipher.DECRYPT_MODE, keySpec, iv)
+            val plain = cipher.doFinal(ciphertext)
+
+            val decryptedBody = plain.toString(Charset.defaultCharset())
+            stanza.replaceBody(decryptedBody)
+
+            return OMEMOMessage.Decrypted(stanza, senderAddr, store.getIdentity(senderAddr).publicKey.serialize().hex) to decryptedKey.isPreKey;
+        } catch (e: Exception) {
+            log.warning(e) { "Cannot decrypt message" }
+            stanza.replaceBody("Cannot decrypt message.")
+            return OMEMOMessage.Error(stanza, OMEMOErrorCondition.CannotDecrypt) to false;
+        }
+    }
+
+
+    actual fun encrypt(session: OMEMOSession, plaintext: String): Element {
+        val iv = generateIV()
+        val keyData = generateKey()
+        val secretKey = SecretKeySpec(keyData, ALGORITHM_NAME)
+        val cipher: Cipher = cipherInstance(Cipher.ENCRYPT_MODE, secretKey, iv)
+
+        var ciphertext = cipher.doFinal(plaintext.toByteArray())
+
+        val authtagPlusInnerKey = ByteArray(16 + 16)
+        val encData = ByteArray(ciphertext.size - 16)
+        System.arraycopy(ciphertext, 0, encData, 0, encData.size)
+        System.arraycopy(ciphertext, encData.size, authtagPlusInnerKey, 16, 16)
+        System.arraycopy(keyData, 0, authtagPlusInnerKey, 0, keyData.size)
+        ciphertext = encData
+
+
+        return element("encrypted") {
+            xmlns = OMEMOModule.XMLNS
+
+            "header" {
+                attributes["sid"] = "${session.localRegistrationId}"
+                "iv" {
+                    +iv.toBase64()
+                }
+                session.ciphers.forEach { (addr, sessionCipher) ->
+                    "key" {
+                        attributes["rid"] = addr.deviceId.toString()
+
+                        val m = sessionCipher.encrypt(authtagPlusInnerKey)
+                        if (m.type == CiphertextMessage.PREKEY_TYPE) {
+                            attributes["prekey"] = "true"
+                        }
+
+                        +m.serialize().toBase64()
+                    }
+                }
+
+            }
+
+            "payload" {
+                +ciphertext.toBase64()
+            }
+        }
+    }
+
+}
+
+private fun Message.replaceBody(newBody: String) {
+    this.getChildren("body").forEach { this.remove(it) }
+    this.add(element("body") {
+        +newBody
+    })
+}
+
+actual typealias CiphertextMessage = org.whispersystems.libsignal.protocol.CiphertextMessage

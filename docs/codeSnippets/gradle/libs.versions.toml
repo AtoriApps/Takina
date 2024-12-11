@@ -1,0 +1,9 @@
+[versions]
+takina = "0.0.1"
+java-languageVersion = "17"
+kotlin = "1.8.0"
+
+[libraries]
+takina-core = { module = "lib.takina:takina-core", version.ref = "takina" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+

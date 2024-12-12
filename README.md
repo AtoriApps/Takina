@@ -5,6 +5,8 @@ Takina（泷奈）
 
 # 项目简介
 
+![泷奈酱](./docs/src/restructured/images/logo.svg)
+
 Takina 是一个使用 [Kotlin](https://kotlinlang.org/) 编写的 [XMPP](https://xmpp.org) 客户端库，提供了对 XMPP 核心标准的实现以及
 XML 的处理功能。此外，它还支持许多常用的扩展协议（XEP）。
 

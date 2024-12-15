@@ -1,9 +1,10 @@
-Takina（泷奈）
-======
+# Takina
 
-[English](./README_EN.md)：更新不及时，以本中文版为准。
+## Other Languages
 
-# 项目简介
+[English](./README_EN.md): May be outdated, for the latest information, please refer to this Chinese version.
+
+## 项目简介
 
 ![泷奈酱](./docs/src/restructured/images/logo.svg)
 
@@ -20,74 +21,74 @@ XML 的处理功能。此外，它还支持许多常用的扩展协议（XEP）�
 **Takina 现由 Atori Apps 团队维护。本项目未来可能作为 Atori（一款基于 Kotlin 的跨平台聊天应用）的基础，用于支持 XMPP
 平台能力。我们计划逐步支持更多 XEP 并持续开发。**
 
-# 功能特性
+## 功能特性
 
 **警告：这些功能特性经我们接手后未经调试，不确定是否可用，除非有明确标明；另外可能有写错或者写漏的功能特性。**
 
-我们的目标是打造[合规性测试](https://xmpp.org/extensions/xep-0479.html)中打平甚至超越德国佬水准的库和[客户端](https://github.com/AtoriApps/Atori)。
+我们的目标是打造 [合规性测试](https://xmpp.org/extensions/xep-0479.html) 中打平甚至超越 [Conversations](https://codeberg.org/iNPUTmice/Conversations) 水准的库和 [客户端](https://github.com/AtoriApps/Atori)。
 
-Takina 支持以下标准：
+### Takina 支持以下标准（根据 `takina.doap`）：
 
-* [RFC 6120：可扩展消息与状态协议 (XMPP)：核心](https://xmpp.org/rfcs/rfc6120.html)
-* [RFC 6121：可扩展消息与状态协议 (XMPP)：即时消息与状态](https://xmpp.org/rfcs/rfc6121.html)
-* [RFC 7590](https://xmpp.org/rfcs/rfc7590.html)：我不知道这是什么，链接遁入虚无了，该死的彼~~样~~得·圣安德烈。
-* [RFC 7622](https://xmpp.org/rfcs/rfc7622.html)：我不知道这是什么，链接遁入虚无了，该死的彼~~样~~得·圣安德烈。
+* 【[RFC 6120：XMPP核心](https://xmpp.org/rfcs/rfc6120.html)】
+* 【[RFC 6121：XMPP即时消息与状态](https://xmpp.org/rfcs/rfc6121.html)】
+* 【[RFC 7590](https://xmpp.org/rfcs/rfc7590.html)】：我不知道这是什么，链接遁入虚无了，该死的彼~~样~~得·圣安德烈。
+* 【[RFC 7622](https://xmpp.org/rfcs/rfc7622.html)】：我不知道这是什么，链接遁入虚无了，该死的彼~~样~~得·圣安德烈。
 
-Takina 支持以下 XEP（根据lib.takina.core.xmpp.modules下的包以及 `takina.doap`）：
+### Takina 支持以下 XEP（根据lib.takina.core.xmpp.modules下的包以及 `takina.doap`）：
 
-* [XEP 0004：数据表单](https://xmpp.org/extensions/xep-0004.html)
-* [XEP 0030：服务发现](https://xmpp.org/extensions/xep-0030.html)
-* [XEP 0045：多用户聊天](https://xmpp.org/extensions/xep-0045.html)
-* [XEP 0059：结果集管理](https://xmpp.org/extensions/xep-0059.html)
-* [XEP 0060：发布-订阅](https://xmpp.org/extensions/xep-0060.html)
-* [XEP 0077：In-Band 注册](https://xmpp.org/extensions/xep-0077.html)：`In-Band` 是频带内注册的意思。
-* [XEP 0082：Xmpp 日期和时间](https://xmpp.org/extensions/xep-0082.html)
-* [XEP 0084：用户头像](https://xmpp.org/extensions/xep-0084.html)
-* [XEP 0085：聊天状态通知](https://xmpp.org/extensions/xep-0085.html)
-* [XEP 0115：实体权能](https://xmpp.org/extensions/xep-0115.html)
-* [XEP 0156：替代性的 XMPP发现 连接方法](https://xmpp.org/extensions/xep-0156.html)
-* [XEP 0184：消息送达回执](https://xmpp.org/extensions/xep-0184.html)
-* [XEP 0191：拉黑命令](https://xmpp.org/extensions/xep-0191.html)
-* [XEP 0198：流管理](https://xmpp.org/extensions/xep-0198.html)
-* [XEP 0199：XMPP Ping](https://xmpp.org/extensions/xep-0199.html)
-* [XEP 0203：延迟送达](https://xmpp.org/extensions/xep-0203.html)
-* [XEP 0215：外部服务发现](https://xmpp.org/extensions/xep-0215.html)
-* [XEP 0237：花名册版本控制](https://xmpp.org/extensions/xep-0237.html)
-* [XEP 0249：直接多用户聊天邀请](https://xmpp.org/extensions/xep-0249.html)
-* [XEP 0280：消息抄送](https://xmpp.org/extensions/xep-0280.html)：消息抄送是德国佬客户端里的翻译，堇羽叫它消息碳。
-* [XEP 0313：消息存档管理](https://xmpp.org/extensions/xep-0313.html)
-* [XEP 0333：可视标记](https://xmpp.org/extensions/xep-0333.html)
-* [XEP 0334：消息处理提示](https://xmpp.org/extensions/xep-0334.html)
-* [XEP 0357：推送通知](https://xmpp.org/extensions/xep-0357.html)
-* [XEP 0359：独特又稳定的 Stanza Id](https://xmpp.org/extensions/xep-0359.html)
-* [XEP 0363：HTTP 文件上传](https://xmpp.org/extensions/xep-0363.html)：德国佬提出的，上大分。
-* [XEP 0369：中介信息交互（MIX）](https://xmpp.org/extensions/xep-0369.html)
-* [XEP 0372：引用](https://xmpp.org/extensions/xep-0372.html)
-* [XEP 0384：OMEMO 加密](https://xmpp.org/extensions/xep-0384.html)：德国佬最喜欢的一集。
-* [XEP 0386：绑定 2](https://xmpp.org/extensions/xep-0386.html)
-* [XEP 0392：一致性颜色生成](https://xmpp.org/extensions/xep-0392.html)
-* [XEP 0440：SASL 通道绑定类型能力](https://xmpp.org/extensions/xep-0440.html)
-* [XEP 0454：OMEMO 媒体分享](https://xmpp.org/extensions/xep-0454.html)
-* [XEP 0483：HTTP在线会议](https://xmpp.org/extensions/xep-0483.html)：`Meet`，不确定是不是这个XEP。
-* ~~Auth~~：暂不知道具体是什么XEP。
-* ~~Commands~~：暂不知道具体是什么XEP。
-* ~~Jingle~~：暂不知道具体是什么XEP。
-* ~~Message~~：这就是消息罢，不是甚么XEP。？
-* ~~Presence~~：暂不知道是什么XEP，可能不是XEP。
-* ~~Pubsub~~：暂不知道具体是什么XEP。
-* ~~Roster~~：暂不知道具体是什么XEP。
-* ~~Rsm~~：大抵不是甚么XEP，可能是原作者 ~~SM~~ 了。？
-* ~~Service Finder~~：暂不知道具体是什么XEP。
-* ~~Stream Error~~：大抵不是甚么XEP，可能是原作者欠操了。？
-* ~~Stream Features~~：大抵不是甚么XEP，可能是原作者欠操了。？
-* ~~Tick~~：暂不知道具体是什么XEP，可能不是XEP。
-* ~~vCard~~：暂不知道具体是什么XEP，可能不是XEP。
+* 【[XEP 0004：数据表单](https://xmpp.org/extensions/xep-0004.html)】
+* 【[XEP 0030：服务发现](https://xmpp.org/extensions/xep-0030.html)】
+* 【[XEP 0045：多用户聊天](https://xmpp.org/extensions/xep-0045.html)】
+* 【[XEP 0059：结果集管理](https://xmpp.org/extensions/xep-0059.html)】
+* 【[XEP 0060：发布-订阅](https://xmpp.org/extensions/xep-0060.html)】
+* 【[XEP 0077：带内注册](https://xmpp.org/extensions/xep-0077.html)】
+* 【[XEP 0082：Xmpp日期和时间](https://xmpp.org/extensions/xep-0082.html)】
+* 【[XEP 0084：用户头像](https://xmpp.org/extensions/xep-0084.html)】
+* 【[XEP 0085：聊天状态通知](https://xmpp.org/extensions/xep-0085.html)】
+* 【[XEP 0115：实体权能](https://xmpp.org/extensions/xep-0115.html)】
+* 【[XEP 0156：替代性的“XMPP发现”连接方法](https://xmpp.org/extensions/xep-0156.html)】
+* 【[XEP 0184：消息送达回执](https://xmpp.org/extensions/xep-0184.html)】
+* 【[XEP 0191：拉黑命令](https://xmpp.org/extensions/xep-0191.html)】
+* 【[XEP 0198：流管理](https://xmpp.org/extensions/xep-0198.html)】
+* 【[XEP 0199：XMPP拨弄](https://xmpp.org/extensions/xep-0199.html)】
+* 【[XEP 0203：延迟送达](https://xmpp.org/extensions/xep-0203.html)】
+* 【[XEP 0215：外部服务发现](https://xmpp.org/extensions/xep-0215.html)】
+* 【[XEP 0237：花名册版本控制](https://xmpp.org/extensions/xep-0237.html)】
+* 【[XEP 0249：直接多用户聊天邀请](https://xmpp.org/extensions/xep-0249.html)】
+* 【[XEP 0280：消息碳](https://xmpp.org/extensions/xep-0280.html)】
+* 【[XEP 0313：消息存档管理](https://xmpp.org/extensions/xep-0313.html)】
+* 【[XEP 0333：可视标记](https://xmpp.org/extensions/xep-0333.html)】
+* 【[XEP 0334：消息处理提示](https://xmpp.org/extensions/xep-0334.html)】
+* 【[XEP 0357：推送通知](https://xmpp.org/extensions/xep-0357.html)】
+* 【[XEP 0359：独特且稳定的节Id](https://xmpp.org/extensions/xep-0359.html)】
+* 【[XEP 0363：HTTP文件上传](https://xmpp.org/extensions/xep-0363.html)】
+* 【[XEP 0369：中介信息交互](https://xmpp.org/extensions/xep-0369.html)】
+* 【[XEP 0372：引用](https://xmpp.org/extensions/xep-0372.html)】
+* 【[XEP 0384：OMEMO 加密](https://xmpp.org/extensions/xep-0384.html)】
+* 【[XEP 0386：绑定 2](https://xmpp.org/extensions/xep-0386.html)】
+* 【[XEP 0392：一致性颜色生成](https://xmpp.org/extensions/xep-0392.html)】
+* 【[XEP 0440：SASL 通道绑定类型能力](https://xmpp.org/extensions/xep-0440.html)】
+* 【[XEP 0454：OMEMO 媒体分享](https://xmpp.org/extensions/xep-0454.html)】
+* 【[XEP 0483：HTTP在线会议](https://xmpp.org/extensions/xep-0483.html)】：`Meet`，不确定是不是这个XEP。
+* 【~~Auth~~】：暂不知道具体是什么XEP。
+* 【~~Commands~~】：暂不知道具体是什么XEP。
+* 【~~Jingle~~】：暂不知道具体是什么XEP。
+* 【~~Message~~】：这就是消息罢，不是甚么XEP。
+* 【~~Presence~~】：这就是状态罢，不是甚么XEP。
+* 【~~Pubsub~~】：暂不知道具体是什么XEP。
+* 【~~Roster~~】：暂不知道具体是什么XEP。
+* 【~~Rsm~~】：大抵不是甚么XEP，可能是原作者欠操了。
+* 【~~Service Finder~~】：暂不知道具体是什么XEP。
+* 【~~Stream Error~~】：大抵不是甚么XEP，可能是原作者欠操了。
+* 【~~Stream Features~~】：大抵不是甚么XEP，可能是原作者欠操了。
+* 【~~Tick~~】：暂不知道具体是什么XEP，可能不是XEP。
+* 【~~vCard~~】：暂不知道具体是什么XEP。
 
 Takina 仍在积极开发中，功能列表会不断更新。
 
-# 快速上手
+## 快速上手
 
-## 最简单的客户端示例
+### 最简单的客户端示例
 
 以下是一个发送单条消息的简单客户端示例：
 
@@ -110,21 +111,15 @@ takina.request.message {
 takina.disconnect()
 ``` 
 
-## 示例代码
+### 示例代码
 
 我们提供了一些 Takina 库用法的小示例，可以在 [代码片段](./docs/codeSnippets/README.md)中找到。
 
-# 编译
+## 编译
 
-编译该库需要使用 [Gradle](https://gradle.org/) 构建工具：
+敬请期待：我们暂不提供编译指南，因为我们暂未理顺编译模式。
 
-    ./gradlew assemble
-
-Jar 文件将存储在 `./build/libs/` 目录中，JavaScript 文件存储在 `./build/js/` 目录中。
-
-~~又骗我，`assemble` 之后根本没有没有 Jar 和 Js 文件。~~
-
-# 许可证
+## 许可证
 
 版权所有 (c) 2024 Atori Apps。
 

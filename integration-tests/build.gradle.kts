@@ -1,12 +1,12 @@
 
 plugins {
 	kotlin("multiplatform")
-	kotlin("plugin.serialization")
+	alias(libs.plugins.kotlinx.serialization)
 }
 
 
 kotlin {
-	jvmToolchain(jdkVersion = libs.versions.java.languageVersion.get().toInt())
+	jvmToolchain(jdkVersion = 21)
 	jvm {
 		withJava()
 		testRuns["test"].executionTask.configure {
@@ -25,8 +25,7 @@ kotlin {
 				implementation(kotlin("test"))
 				implementation(kotlin("test-junit"))
 				implementation(project(":takina-core"))
-				implementation(project(":takina-bouncycastle"))
-				implementation(deps.kotlinx.datetime)
+				implementation(libs.kotlinx.datetime)
 			}
 		}
 	}

@@ -1,16 +1,12 @@
-
 rootProject.name = "takina"
 
 include(
 	":docs",
-	":takina-bouncycastle",
 	":takina-core",
-	":takina-coroutines",
-	":takina-rx",
+	":integration-tests",
 )
 
 pluginManagement {
-	includeBuild("convention-plugin-multiplatform")
 	repositories {
 		gradlePluginPortal()
 		mavenCentral()

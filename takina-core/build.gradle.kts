@@ -1,63 +1,85 @@
 plugins {
-	id("kotlinMultiplatformConvention")
-	`maven-publish`
-	signing
-	alias(libs.plugins.kotlinx.serialization)
-	alias(libs.plugins.jetbrains.dokka)
+    alias(libs.plugins.multiplatform)
+    alias(libs.plugins.kotlinx.serialization)
+    alias(libs.plugins.jetbrains.dokka)
 }
 
 kotlin {
-	sourceSets {
-		val commonMain by getting {
-			dependencies {
-				implementation(libs.kotlinx.serialization.core)
-				implementation(libs.kotlinx.datetime)
-				implementation(libs.krypto)
-			}
-		}
+    jvmToolchain(jdkVersion = 21)
 
-		val commonTest by getting {
-			dependencies {
-				implementation(libs.kotlinx.serialization.json)
-			}
-		}
+    jvm {
+        withJava()
+        testRuns["test"].executionTask.configure {
+            useJUnit()
+        }
+    }
 
-		val omemoMain by creating {
-			dependsOn(commonMain)
-		}
+    /*
+    js(IR) {
+        browser {
+            commonWebpackConfig {
+                // cssSupport()
+            }
+            testTask {
+                useKarma {
+                    useChromeHeadless()
+                }
+            }
+            binaries.executable()
+        }
+    }
+    */
 
-		val omemoTest by creating {
-			dependsOn(commonTest)
-		}
+    sourceSets {
+        all {
+            languageSettings {
+                optIn("kotlin.RequiresOptIn")
+            }
+        }
 
-		val jvmMain by getting {
-			dependsOn(omemoMain)
-			dependencies {
-				implementation(libs.minidns)
-				implementation(libs.signal.protocol.java)
-			}
-		}
+        val commonMain by getting {
+            dependencies {
+                implementation(kotlin("stdlib-common"))
+                implementation(libs.kotlinx.serialization.core)
+                implementation(libs.kotlinx.datetime)
+                implementation(libs.krypto)
+            }
+        }
 
-		val jvmTest by getting {
-			dependsOn(omemoTest)
-		}
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(libs.kotlinx.serialization.json)
+            }
+        }
 
-		// TODO：重开Js库
-		/*val jsMain by getting  {
-			dependsOn(commonMain)
-		}
-		val jsTest by getting {
-			dependsOn(commonTest)
-		}*/
-	}
+        val omemoMain by creating {
+            dependsOn(commonMain)
+        }
+
+        val omemoTest by creating {
+            dependsOn(commonTest)
+        }
+
+        val jvmMain by getting {
+            dependsOn(omemoMain)
+            dependencies {
+                implementation(libs.minidns)
+                implementation(libs.signal.protocol.java)
+            }
+        }
+
+        val jvmTest by getting {
+            dependsOn(omemoTest)
+            dependencies {
+                implementation(kotlin("test-junit"))
+            }
+        }
+    }
 }
 
-//tasks["clean"].doLast {
-//	delete("$rootDir/frameworks/OpenSSL.xcframework")
-//}
-//
-
-tasks.register("prepareLibsignal") {
+// TODO: 重开下载libsignal和OpenSSL
+/*tasks.register("prepareLibsignal") {
 	description = "Download and unpack libsignal XCFramework."
 	val zipUrl = "https://github.com/tigase/libsignal/releases/download/1.0.0/libsignal.xcframework.zip"
 
@@ -101,13 +123,14 @@ tasks.register("prepareOpenSSL") {
 			}
 		}
 	}
-}
+}*/
 
-tasks.withType<org.jetbrains.dokka.gradle.DokkaTask>().configureEach {
-		moduleName.set("Takina by Atori Apps")
-		moduleVersion.set(project.version.toString())
-		failOnWarning.set(false)
-		suppressObviousFunctions.set(true)
-		suppressInheritedMembers.set(false)
-		offlineMode.set(false)
-	}
+// TODO: 重开这玩意儿：生成文档的
+/*tasks.withType<org.jetbrains.dokka.gradle.DokkaTask>().configureEach {
+    moduleName.set("Takina by Atori Apps")
+    moduleVersion.set(project.version.toString())
+    failOnWarning.set(false)
+    suppressObviousFunctions.set(true)
+    suppressInheritedMembers.set(false)
+    offlineMode.set(false)
+}*/

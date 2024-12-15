@@ -1,9 +1,3 @@
 language = Objective-C
 package = OpenSSL
-#headers = openssl/ssl.h
 headers = openssl/OpenSSL.h
-#headers = OpenSSL.h
-#compilerOpts = -framework OpenSSL
-#compilerOpts = "-F$projectDir/frameworks -framework OpenSSL"
-#compilerOpts = "-I/usr/local/Cellar/openssl@1.1/1.1.1m/include"
-#linkerOpts = "-lssl -lcrypto"

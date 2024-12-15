@@ -1,14 +1,15 @@
-Integration tests
-=================
+## 集成测试
 
-To run integration tests, you need to create `local.properties` file in `integration-tests` project folder. 
-File must contain user credentials (account must exists). For example:
+要运行集成测试，您需要在 `integration-tests` 项目文件夹中创建一个名为 `local.properties` 的文件。
+
+该文件必须包含用户凭证（帐户必须存在）。例如：
 
 ```properties
 userJID=account@xmppserver.com
 password=******
 ```
-To run tests execute `:integration-tests:check` task from root project directory:
+
+要运行测试，请从根项目目录执行 `:integration-tests:check` 任务：
 
 ```shell
 ./gradlew :integration-tests:clean :integration-tests:check

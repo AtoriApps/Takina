@@ -26,9 +26,17 @@ Takina 目前是开源的，您可以在本存储库访问她的源代码。
 
 ### 项目架构
 
+**警告：以下架构图仅供参考，或会随着项目的发展而更改，且部分模块尚未实现。请您多来留意库架构的更改。**
+
 * Core
   * Xml
   * Xmpp
+
+* JVM
+
+* JS
+
+如果您对这个架构有任何意见或建议，都可以发 `Issue` 告诉我们。
 
 ## 功能特性
 
@@ -36,37 +44,56 @@ Takina 目前是开源的，您可以在本存储库访问她的源代码。
 中打平甚至超越 [Conversations](https://codeberg.org/iNPUTmice/Conversations)
 水准的库和 [客户端](https://github.com/AtoriApps/Atori)。
 
-### Takina 支持以下标准（根据 `takina.doap`）：
+### Takina 支持以下标准：
 
 * 【[RFC 6120：XMPP核心](https://xmpp.org/rfcs/rfc6120.html)】：暂未实现。
 * 【[RFC 6121：XMPP即时消息与状态](https://xmpp.org/rfcs/rfc6121.html)】：暂未实现。
 
 ### Takina 支持以下 XEP：
 
-* 【[XEP 0000：名称](https://xmpp.org/extensions/xep-0000.html)】：格式如此。
+`* 【[XEP 0000：名称](https://xmpp.org/extensions/xep-0000.html)】：格式如此。`
 
-Takina 仍在积极开发中，功能列表会不断更新。
+Takina 仍在积极开发中，功能列表会不断更新。如果您对库的功能和支持的 XEP 有任何要求、建议或意见，都可以发 `Issue` 告诉我们。
 
 ## 快速上手
 
 ### 示例范式
 
-以下可能会是我们库将来的使用范式：
+以下将是我们库未来的使用范式：
 
 ```kotlin
-val demoUserJID = "client@atoriapps.net".toBareJID()
+val demoUserJID = "韩松@king.dprk".toBareJID()
 
+// 使用DSL来配置Takina实例
 val takina = createTakina {
-    newAccount {
-        jid = demoUserJID
-        password = "secret"
-    }
-}
-takina.connectAndWaitAll()
+  addAccount {
+    jid = demoUserJID
+    password { "114514" } // 传递一个提供者函数，以便懒加载密码
+  }
+  
+  addAccount {
+    jid = "主爱@king.dprk".toBareJID()
+    password { "1919810" }
+  }
 
-takina.getAccount(demoUserJID).request.message {
-    to = "romeo@example.net".toJID()
-    body = "Art thou not Romeo, and a Montague?"
+  onConfigureComponent<XxxComponent> {
+    // 在这里配置组件
+  }
+}
+
+// 简单地注册事件监听器
+takina.events.on<AllConnectedEvent> {
+  LogUtils.info(TAG, "所有账号已连接")
+}
+
+// 连接所有未连接的账号
+takina.connectAll()
+
+// 简单地发送消息
+takina.request.message {
+  from = demoUserJID // 指定用来发消息的账户，如果有且仅有一个账号，可以不用填写本字段
+  to = "将军@king.dprk".toJID()
+  body = "你的盐我的醋，三叔我带着五十万美援来看你了"
 }.send()
 
 takina.disconnectAll()

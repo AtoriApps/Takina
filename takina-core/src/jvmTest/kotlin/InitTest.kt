@@ -28,6 +28,7 @@ class InitTest {
                 喊话()
             }
         }
+
         takina.events.on<AllConnectedEvent> {
             LogUtils.info(TAG, "所有账号已连接")
         }

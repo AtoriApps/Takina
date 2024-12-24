@@ -1,8 +1,13 @@
 ﻿package org.atoriapps.takina.core.utils
 
+import org.atoriapps.takina.core.events.TakinaEvent
 import kotlin.reflect.KClass
 
 object LanguageUtils {
+    /*fun KClass<TakinaEvent>.getInstance(): TakinaEvent {
+        return this.constructors.first().call() as TakinaEvent
+    }*/
+
     val KClass<*>.clzName: String get() = this.simpleName ?: this.qualifiedName?.substringAfterLast('.') ?: "无名类"
 
     fun <T> MutableList<T>.findOrAdd(predicate: (T) -> Boolean, factory: () -> T): T {

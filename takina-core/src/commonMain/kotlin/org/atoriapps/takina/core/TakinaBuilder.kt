@@ -49,22 +49,31 @@ class TakinaConfiguration {
         }
     }
 
-    inline fun <reified COMPONENT : TakinaComponent> registerComponent(pvd: TakinaComponentProvider<COMPONENT>) {
-        if (componentConfigurations.any { it.clz == COMPONENT::class })
-            throw IllegalArgumentException("组件 ${COMPONENT::class.clzName} 已被注册")
+    fun <COMPONENT : TakinaComponent> registerComponent(provider: TakinaComponentProvider<COMPONENT>) {
+        val clz = provider.getComponentType()
+
+        if (componentConfigurations.any { it.clz == clz })
+            throw IllegalArgumentException("组件 ${clz.clzName} 已被注册")
         else componentConfigurationsForAdd.add(
             ComponentConfigurationPair(
-                COMPONENT::class,
-                ComponentConfiguration(pvd)
+                clz,
+                ComponentConfiguration(provider)
             )
         )
     }
 
-    inline fun <reified COMPONENT : TakinaComponent> onConfigureComponent(noinline init: COMPONENT.(IContext) -> Unit) {
+    fun <COMPONENT : TakinaComponent> onConfigureComponent(
+        provider: TakinaComponentProvider<COMPONENT>,
+        init: COMPONENT.(TakinaContext) -> Unit
+    ) {
+        val clz = provider.getComponentType()
+
         val configuration =
-            componentConfigurations.find { it.clz == COMPONENT::class } as ComponentConfigurationPair<COMPONENT>?
-                ?: throw IllegalArgumentException("组件 ${COMPONENT::class.clzName} 尚未注册")
-        configuration.config.configurer = init
+            componentConfigurations.find { it.clz == clz } as ComponentConfigurationPair<COMPONENT>?
+                ?: throw IllegalArgumentException("组件 ${clz.clzName} 尚未注册")
+
+        // 不可取消哦 😊
+        configuration.config.configurers.add(init)
     }
 
     @TakinaConfigDsl
@@ -81,6 +90,6 @@ class TakinaConfiguration {
 
     @TakinaConfigDsl
     class ComponentConfiguration<COMPONENT : TakinaComponent>(val provider: TakinaComponentProvider<COMPONENT>) {
-        var configurer: (COMPONENT.(IContext) -> Unit)? = null
+        var configurers: MutableList<(COMPONENT.(TakinaContext) -> Unit)> = mutableListOf()
     }
 }

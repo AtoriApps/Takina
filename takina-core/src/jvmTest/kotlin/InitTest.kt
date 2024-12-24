@@ -1,6 +1,6 @@
 ﻿import org.atoriapps.takina.core.components.恩情Component
 import org.atoriapps.takina.core.createTakina
-import org.atoriapps.takina.core.events.AllConnectedEvent
+import org.atoriapps.takina.core.events.恩情Event
 import org.atoriapps.takina.core.utils.LogUtils
 import org.atoriapps.takina.core.xmpp.toJid
 import kotlin.test.Test
@@ -23,14 +23,14 @@ class InitTest {
                 password { "114514" }
             }
 
-            onConfigureComponent<恩情Component> {
+            onConfigureComponent(恩情Component) {
                 LogUtils.warn(TAG, "就你这狗皮将军，给我叫两声")
                 喊话()
             }
         }
 
-        takina.events.on<AllConnectedEvent> {
-            LogUtils.info(TAG, "所有账号已连接")
+        takina.events.on(恩情Event) {
+            LogUtils.info(TAG, "所有账号连接状态改变")
         }
 
         takina.connectAll()

@@ -4,15 +4,20 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.TakinaComponent
 import org.atoriapps.takina.core.connections.TakinaConnection
-import org.atoriapps.takina.core.events.AbstractEventBus
+import org.atoriapps.takina.core.events.AbstractTakinaEventBus
+import org.atoriapps.takina.core.events.TakinaEventBus
 import org.atoriapps.takina.core.utils.LanguageUtils.clzName
 import org.atoriapps.takina.core.utils.LogUtils
+import org.atoriapps.takina.core.xmpp.Jid
 
 
-abstract class AbstractTakina(val config: TakinaConfiguration) : IContext {
+abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     companion object {
         private const val TAG = "AbstractTakina"
     }
+
+    final override val events = TakinaEventBus(this)
+
     protected val components = mutableListOf<TakinaComponent>()
     protected val accountConnections = mutableListOf<TakinaConnection>()
 
@@ -31,15 +36,18 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : IContext {
 
             // 安装后配置前是不是要插入 初始化通用Takina本身 的代码？
 
+            // 但是哈，外面没有configurer怎么办？
             LogUtils.debug(TAG, "正在配置", clzName)
             // 先使用内置配置器
             cfg.config.provider.configure(this, component)
             // 再执行外部配置器
-            cfg.config.configurer?.let {
+            cfg.config.configurers.forEach {
                 it(component, this)
             }
             components.add(component)
         }
+
+        // TODO：请在这里收集 Config 里的账号，以后不要再直接使用 Config
 
         LogUtils.debug(TAG, "初始化 通用Takina 完成")
     }
@@ -50,14 +58,16 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : IContext {
 
     abstract fun disconnectAll()
     abstract fun disconnectAllAsync()
+
+    abstract fun connect(jid: Jid)
 }
 
 expect class Takina(cfg: TakinaConfiguration) : AbstractTakina
 
-interface IContext {
+interface TakinaContext {
     // 暴露给外界以访问EventBus、PackagesBuilder、AccountConnections
     // TODO：谁要访问？
-    val events: AbstractEventBus
+    val events: AbstractTakinaEventBus
 }
 
 @DslMarker

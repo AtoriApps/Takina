@@ -82,7 +82,7 @@ val takina = createTakina {
 }
 
 // 简单地注册事件监听器
-takina.events.on<AllConnectedEvent> {
+takina.events.on(AllConnectedEvent) {
   LogUtils.info(TAG, "所有账号已连接")
 }
 

@@ -1,3 +1,5 @@
 ﻿package org.atoriapps.takina.core.connections
 
-actual class Connector : AbstractConnector() {}
+actual class Connector : AbstractConnector() {
+
+}

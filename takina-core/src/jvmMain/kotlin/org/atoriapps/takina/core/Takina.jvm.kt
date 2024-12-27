@@ -43,7 +43,7 @@ actual class Takina actual constructor(cfg: TakinaConfiguration) : AbstractTakin
         events.emit(恩情Event())
     }
 
-    @Deprecated("不应该再直接使用 Config 类型的账号")
+    @Deprecated("不应该再直接使用 Config 性的账号")
     private fun connect(accountConfig: TakinaConfiguration.AccountConfiguration) {
         LogUtils.debug(TAG, "连接账号", accountConfig.jid!!)
         accountConnections.findOrAdd({
@@ -55,7 +55,7 @@ actual class Takina actual constructor(cfg: TakinaConfiguration) : AbstractTakin
     }
 
     override fun connect(jid: Jid) {
-        // TODO：不应该再直接使用 Config 里面的账号
+        // TODO：不应该再直接使用 Config 性的账号
         config.accountConfigurations.find { it.jid == jid }?.let { accountConfig ->
             LogUtils.debug(TAG, "存在账号，尝试连接", jid)
             connect(accountConfig)

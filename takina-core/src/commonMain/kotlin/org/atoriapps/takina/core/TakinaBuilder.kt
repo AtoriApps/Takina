@@ -29,6 +29,8 @@ class TakinaConfiguration {
         val clz: KClass<T>, val config: TakinaConfiguration.ComponentConfiguration<T>
     )
 
+    // 涉及服务器以及安全配置怎么搞，而且是适用于单个账号还是实例全局？
+
     internal fun registerAllComponents() {
         registerCoreComponents()
     }

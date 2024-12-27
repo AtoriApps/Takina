@@ -25,6 +25,8 @@ class TakinaConnection(accountConfig: TakinaConfiguration.AccountConfiguration) 
 
         LogUtils.debug("TakinaConnection", "连接", boundJid)
 
+        Thread.sleep(5000)
+
         // TODO：连接
     }
 }

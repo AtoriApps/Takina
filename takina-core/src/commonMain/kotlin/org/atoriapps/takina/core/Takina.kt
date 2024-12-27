@@ -67,7 +67,7 @@ expect class Takina(cfg: TakinaConfiguration) : AbstractTakina
 interface TakinaContext {
     // 暴露给外界以访问EventBus、PackagesBuilder、AccountConnections
     // TODO：谁要访问？
-    val events: AbstractTakinaEventBus
+    val events: TakinaEventBus
 }
 
 @DslMarker

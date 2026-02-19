@@ -90,6 +90,35 @@ class TakinaConnectionTest {
     }
 
     @Test
+    fun connection_shouldExposeSmSupportFromFeatures() {
+        val fake = FakeConnector(
+            frames = listOf(
+                "<stream:stream xmlns:stream='http://etherx.jabber.org/streams'/>",
+                "<stream:features><sm xmlns='urn:xmpp:sm:3'/><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>",
+                "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>",
+                "<stream:stream xmlns:stream='http://etherx.jabber.org/streams'/>",
+                "<stream:features><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/><sm xmlns='urn:xmpp:sm:3'/></stream:features>",
+                "__BIND_RESULT__",
+            ),
+        )
+        val config = ConnectionConfig(
+            jid = "alice@example.com".toBareJid(),
+            host = "example.com",
+            securityMode = SecurityMode.PLAIN,
+            port = 5222,
+            resource = "takina",
+        )
+        val connection = TakinaConnection(
+            config = config,
+            passwordProvider = { "password" },
+            connectorFactory = { fake },
+        )
+
+        connection.connect()
+        assertTrue(connection.supportsStreamManagement)
+    }
+
+    @Test
     fun connectedConnection_shouldDeliverInboundStanzaFromPump() {
         val fake = FakeConnector(
             frames = listOf(
@@ -120,6 +149,39 @@ class TakinaConnectionTest {
         fake.emitFromPump("<message from='bob@example.com' to='alice@example.com'><body>hello</body></message>")
 
         assertEquals(inboundXml?.contains("<message"), true)
+    }
+
+    @Test
+    fun connectedConnection_shouldDeliverNonStanzaFrameToInboundFrameCallback() {
+        val fake = FakeConnector(
+            frames = listOf(
+                "<stream:stream xmlns:stream='http://etherx.jabber.org/streams'/>",
+                "<stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>",
+                "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>",
+                "<stream:stream xmlns:stream='http://etherx.jabber.org/streams'/>",
+                "<stream:features><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/></stream:features>",
+                "__BIND_RESULT__",
+            ),
+        )
+        val config = ConnectionConfig(
+            jid = "alice@example.com".toBareJid(),
+            host = "example.com",
+            securityMode = SecurityMode.PLAIN,
+            port = 5222,
+            resource = "takina",
+        )
+
+        var inboundFrameXml: String? = null
+        val connection = TakinaConnection(
+            config = config,
+            passwordProvider = { "password" },
+            connectorFactory = { fake },
+            onInboundFrame = { _, xml -> inboundFrameXml = xml },
+        )
+        connection.connect()
+        fake.emitFromPump("<r xmlns='urn:xmpp:sm:3'/>")
+
+        assertEquals("<r xmlns='urn:xmpp:sm:3'/>", inboundFrameXml)
     }
 
     @Test

@@ -22,6 +22,10 @@ internal object XmppProtocol {
         Regex("""<\s*mechanism\s*>\s*${Regex.escape(mechanism)}\s*<\s*/\s*mechanism\s*>""")
             .containsMatchIn(featuresXml)
 
+    fun containsStreamManagement(featuresXml: String): Boolean =
+        Regex("""<\s*sm\b[^>]*xmlns\s*=\s*['"]urn:xmpp:sm:3['"][^>]*/?>""")
+            .containsMatchIn(featuresXml)
+
     fun isSaslSuccess(xml: String): Boolean = rootName(xml) == "success"
 
     fun isStartTlsProceed(xml: String): Boolean = rootName(xml) == "proceed"

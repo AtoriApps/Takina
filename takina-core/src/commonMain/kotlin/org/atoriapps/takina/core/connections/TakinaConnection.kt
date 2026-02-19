@@ -16,6 +16,8 @@ class TakinaConnection(
     private val passwordProvider: () -> String,
     private val connectorFactory: () -> AbstractConnector = { Connector() },
     private val onInboundStanza: (TakinaConnection, String) -> Unit = { _, _ -> },
+    private val onInboundFrame: (TakinaConnection, String) -> Unit = { _, _ -> },
+    private val onOutboundFrame: (TakinaConnection, String) -> Unit = { _, _ -> },
     private val onConnectionClosed: (TakinaConnection, String) -> Unit = { _, _ -> },
     private val onLifecycleStageChanged: (
         connection: TakinaConnection,
@@ -42,9 +44,13 @@ class TakinaConnection(
     val lifecycleStage: ConnectionLifecycleStage
         get() = stateMachine.stage
 
+    val supportsStreamManagement: Boolean
+        get() = lastFeaturesXml?.let(XmppProtocol::containsStreamManagement) == true
+
     private var connector: AbstractConnector? = null
     private var closeRequestedByUser = false
     private val stateMachine = ConnectionStateMachine()
+    private var lastFeaturesXml: String? = null
 
     private val pendingIqLock = Any()
     private val pendingIqRequests = linkedMapOf<String, CompletableDeferred<IqResult>>()
@@ -69,6 +75,7 @@ class TakinaConnection(
                 reason = "TCP 连接已建立",
             )
             var featuresXml = openStreamAndReadFeatures(createdConnector)
+            lastFeaturesXml = featuresXml
 
             if (config.securityMode == SecurityMode.START_TLS) {
                 if (!XmppProtocol.containsStartTls(featuresXml)) {
@@ -87,6 +94,7 @@ class TakinaConnection(
                     reason = "TLS 升级完成",
                 )
                 featuresXml = openStreamAndReadFeatures(createdConnector)
+                lastFeaturesXml = featuresXml
             }
 
             if (!XmppProtocol.containsMechanism(featuresXml, "PLAIN")) {
@@ -104,7 +112,9 @@ class TakinaConnection(
                 reason = "SASL 认证成功",
             )
 
-            openStreamAndReadFeatures(createdConnector)
+            openStreamAndReadFeatures(createdConnector).also { refreshed ->
+                lastFeaturesXml = refreshed
+            }
             bindResource(createdConnector)
 
             connector = createdConnector
@@ -122,6 +132,7 @@ class TakinaConnection(
         } catch (t: Throwable) {
             state = ConnectionState.DISCONNECTED
             runCatching { createdConnector.close() }
+            lastFeaturesXml = null
             failAllPendingIqRequests(TakinaConnectionException("connection failed for account $boundJid", t))
             forceLifecycle(ConnectionLifecycleStage.DISCONNECTED)
             LogUtils.error(TAG, "连接失败", boundJid, t.message ?: "未知错误")
@@ -141,6 +152,7 @@ class TakinaConnection(
         } finally {
             runCatching { connector?.close() }
             connector = null
+            lastFeaturesXml = null
             state = ConnectionState.DISCONNECTED
             closeRequestedByUser = false
             failAllPendingIqRequests(NotConnectedException("account $boundJid disconnected"))
@@ -156,6 +168,7 @@ class TakinaConnection(
     fun sendRaw(xml: String) {
         val activeConnector = connector ?: throw NotConnectedException("account $boundJid is not connected")
         activeConnector.send(xml)
+        onOutboundFrame(this, xml)
     }
 
     suspend fun sendIqAndAwaitResult(
@@ -230,7 +243,8 @@ class TakinaConnection(
     }
 
     private fun handleIncomingFrame(frame: String) {
-        when (XmppProtocol.rootName(frame)) {
+        val root = XmppProtocol.rootName(frame)
+        when (root) {
             "iq" -> {
                 completePendingIqIfMatched(frame)
                 onInboundStanza(this, frame)
@@ -240,6 +254,7 @@ class TakinaConnection(
             "stream" -> Unit
             else -> Unit
         }
+        if (root != "stream") onInboundFrame(this, frame)
     }
 
     private fun completePendingIqIfMatched(frame: String) {
@@ -263,6 +278,7 @@ class TakinaConnection(
         if (state == ConnectionState.DISCONNECTED || state == ConnectionState.DISCONNECTING) return
         state = ConnectionState.DISCONNECTED
         connector = null
+        lastFeaturesXml = null
         LogUtils.warn(TAG, "连接异常关闭", boundJid, error.message ?: "未知错误")
         failAllPendingIqRequests(TakinaConnectionException("connection frame pump failed", error))
         forceLifecycle(ConnectionLifecycleStage.DISCONNECTED)

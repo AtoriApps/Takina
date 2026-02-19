@@ -2,6 +2,8 @@ package org.atoriapps.takina.examples
 
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.MessageReceiptsComponent
+import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.discovery
 import org.atoriapps.takina.core.createTakina
 import org.atoriapps.takina.core.events.ConnectionClosedEvent
@@ -32,6 +34,8 @@ fun main() {
 
     val takina = createTakina(registerAllComponents = false) {
         registerComponent(DiscoveryComponent)
+        registerComponent(StreamManagementComponent)
+        registerComponent(MessageReceiptsComponent)
         addAccount {
             this.jid = jid
             this.password { password }
@@ -67,6 +71,6 @@ fun main() {
     }
 
     println("已连接并发送初始 presence/disco，请等待入站 stanza...")
-    Thread.sleep(5_000)
+    Thread.sleep(50_000)
     takina.disconnect(jid)
 }

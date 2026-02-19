@@ -23,6 +23,10 @@ class StreamManagementComponent internal constructor(
         override fun getComponentType() = StreamManagementComponent::class
     }
 
+    var autoReconnectOnConnectionDropped: Boolean = true
+    var autoReconnectMaxAttempts: Int = 3
+    var autoAckRequestInterval: Int = 10
+
     private val statesByJid = linkedMapOf<BareJid, SessionState>()
 
     @Synchronized
@@ -104,8 +108,19 @@ class StreamManagementComponent internal constructor(
         takina.sendRaw(from, ack(handledByClient).toXmlString())
     }
 
-    fun onOutboundStanzaSent(state: SessionState): Long = synchronized(state) {
+    fun onOutboundStanzaSent(state: SessionState, xml: String): Long = synchronized(state) {
+        val replayHead = state.resumeReplayQueue.firstOrNull()
+        if (replayHead == xml) {
+            state.resumeReplayQueue.removeFirst()
+            return@synchronized state.outboundSentCount
+        }
+
         state.outboundSentCount += 1
+        state.outboundSinceAckRequest += 1
+        state.pendingOutbound += PendingOutboundStanza(
+            sequence = state.outboundSentCount,
+            xml = xml,
+        )
         state.outboundSentCount
     }
 
@@ -121,8 +136,73 @@ class StreamManagementComponent internal constructor(
             if (normalized > state.lastServerAckCount) {
                 state.lastServerAckCount = normalized
             }
+            state.pendingOutbound.removeAll { it.sequence <= state.lastServerAckCount }
+            state.awaitingServerAckReply = false
+            state.outboundSinceAckRequest = 0
             state.lastServerAckCount
         }
+    }
+
+    fun snapshotUnackedForResume(state: SessionState): List<String> = synchronized(state) {
+        state.pendingOutbound.map { it.xml }
+    }
+
+    fun scheduleResumeReplay(state: SessionState, stanzas: List<String>) = synchronized(state) {
+        state.resumeReplayQueue.clear()
+        state.resumeReplayQueue.addAll(stanzas)
+    }
+
+    fun consumePendingReplayAfterEnable(state: SessionState): List<String> = synchronized(state) {
+        if (state.pendingReplayAfterEnable.isEmpty()) return emptyList()
+        val replay = state.pendingReplayAfterEnable.toList()
+        state.pendingReplayAfterEnable.clear()
+        replay
+    }
+
+    fun prependPendingReplayAfterEnable(state: SessionState, stanzas: List<String>) {
+        if (stanzas.isEmpty()) return
+
+        synchronized(state) { state.pendingReplayAfterEnable.addAll(0, stanzas) }
+    }
+
+    fun markEnableRequested(state: SessionState) = synchronized(state) {
+        state.enableRequested = true
+        state.resumeRequested = false
+        state.lastResumePreviousId = null
+    }
+
+    fun markResumeRequested(
+        state: SessionState,
+        previousId: String,
+    ) = synchronized(state) {
+        state.resumeRequested = true
+        state.enableRequested = false
+        state.lastResumePreviousId = previousId
+    }
+
+    fun shouldSendAckRequest(state: SessionState): Boolean = synchronized(state) {
+        if (!state.enabled) return@synchronized false
+        if (autoAckRequestInterval <= 0) return@synchronized false
+        if (state.awaitingServerAckReply) return@synchronized false
+        state.outboundSinceAckRequest >= autoAckRequestInterval
+    }
+
+    fun markAckRequestSent(state: SessionState) = synchronized(state) {
+        state.awaitingServerAckReply = true
+        state.outboundSinceAckRequest = 0
+    }
+
+    fun resetReconnectAttempts(state: SessionState) = synchronized(state) {
+        state.reconnectAttemptCount = 0
+    }
+
+    fun shouldAutoReconnect(state: SessionState): Boolean = synchronized(state) {
+        state.reconnectAttemptCount < autoReconnectMaxAttempts
+    }
+
+    fun markReconnectAttempt(state: SessionState): Int = synchronized(state) {
+        state.reconnectAttemptCount += 1
+        state.reconnectAttemptCount
     }
 
     fun parseInboundFrame(xml: String): InboundFrame? {
@@ -151,27 +231,61 @@ class StreamManagementComponent internal constructor(
     fun applyInboundFrame(state: SessionState, frame: InboundFrame) {
         when (frame) {
             is InboundFrame.Enabled -> synchronized(state) {
+                if (state.resumeRequested && state.pendingOutbound.isNotEmpty()) {
+                    val remaining = state.pendingOutbound.map { it.xml }
+                    state.pendingReplayAfterEnable.clear()
+                    state.pendingReplayAfterEnable.addAll(remaining)
+                }
                 state.enabled = true
                 state.resumed = false
                 state.sessionId = frame.id
                 state.allowResume = frame.allowResume
                 state.maxResumeSeconds = frame.maxResumeSeconds
+                state.outboundSentCount = 0
+                state.lastServerAckCount = 0
+                state.inboundHandledCount = 0
+                state.awaitingServerAckReply = false
+                state.outboundSinceAckRequest = 0
+                state.pendingOutbound.clear()
+                state.resumeReplayQueue.clear()
+                state.enableRequested = false
+                state.resumeRequested = false
+                state.lastResumePreviousId = null
             }
 
             is InboundFrame.Resumed -> synchronized(state) {
                 state.enabled = true
                 state.resumed = true
                 onServerAcknowledged(state, frame.handledByServer)
+                state.enableRequested = false
+                state.resumeRequested = false
+                state.lastResumePreviousId = null
             }
 
             is InboundFrame.Acknowledged -> onServerAcknowledged(state, frame.handledByServer)
             InboundFrame.AckRequest -> Unit
             is InboundFrame.Failed -> synchronized(state) {
+                if (frame.handledByServer != null) {
+                    onServerAcknowledged(state, frame.handledByServer)
+                }
+                val remaining = state.pendingOutbound.map { it.xml }
+                state.pendingReplayAfterEnable.clear()
+                state.pendingReplayAfterEnable.addAll(remaining)
+                state.pendingOutbound.clear()
+                state.resumeReplayQueue.clear()
+                state.outboundSentCount = 0
+                state.lastServerAckCount = 0
+                state.inboundHandledCount = 0
+                state.awaitingServerAckReply = false
+                state.outboundSinceAckRequest = 0
                 state.enabled = false
                 state.resumed = false
                 state.sessionId = null
                 state.allowResume = false
                 state.maxResumeSeconds = null
+                state.enableRequested = false
+                state.resumeRequested = false
+                state.lastResumePreviousId = null
             }
         }
     }
@@ -227,7 +341,27 @@ class StreamManagementComponent internal constructor(
             internal set
         var lastServerAckCount: Long = 0
             internal set
+        var enableRequested: Boolean = false
+            internal set
+        var resumeRequested: Boolean = false
+            internal set
+        var lastResumePreviousId: String? = null
+            internal set
+        var awaitingServerAckReply: Boolean = false
+            internal set
+        var outboundSinceAckRequest: Int = 0
+            internal set
+        internal val pendingOutbound: MutableList<PendingOutboundStanza> = mutableListOf()
+        internal val pendingReplayAfterEnable: MutableList<String> = mutableListOf()
+        internal val resumeReplayQueue: ArrayDeque<String> = ArrayDeque()
+        var reconnectAttemptCount: Int = 0
+            internal set
     }
+
+    internal data class PendingOutboundStanza(
+        val sequence: Long,
+        val xml: String,
+    )
 }
 
 fun TakinaContext.streamManagement(): StreamManagementComponent = requireComponent(StreamManagementComponent)

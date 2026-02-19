@@ -2,6 +2,7 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.DiscoveryComponent
 import org.atoriapps.takina.core.components.CapabilitiesComponent
+import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.TakinaComponent
 import org.atoriapps.takina.core.components.TakinaComponentProvider
@@ -49,6 +50,7 @@ class TakinaConfiguration {
     internal fun registerOptionalComponents() {
         registerComponent(CapabilitiesComponent)
         registerComponent(DiscoveryComponent)
+        registerComponent(MessageReceiptsComponent)
         registerComponent(StreamManagementComponent)
     }
 

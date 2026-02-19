@@ -2,6 +2,7 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.CapabilitiesComponent
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.discovery
 import org.atoriapps.takina.core.connections.ConnectionConfig
@@ -182,6 +183,7 @@ class CommonInitTest {
 
         assertNotNull(takina.findComponent(CapabilitiesComponent))
         assertNotNull(takina.findComponent(DiscoveryComponent))
+        assertNotNull(takina.findComponent(MessageReceiptsComponent))
         assertNotNull(takina.findComponent(StreamManagementComponent))
     }
 }

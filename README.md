@@ -2,7 +2,7 @@
 
 ## Other Languages
 
-[English](./README_EN.md): May be outdated, for the latest information, please refer to this Chinese version.
+[English](./README_EN.md): Outdated, for the latest information, please refer to this Chinese version.
 
 ## 项目信息
 

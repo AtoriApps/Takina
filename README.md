@@ -169,7 +169,7 @@ takina.disconnectAll()
 可直接执行：
 
 ```bash
-bash ./gradlew :takina-examples:runBasicJvmExample
+./gradlew :takina-examples:runBasicJvmExample
 ```
 
 ```bash
@@ -188,7 +188,7 @@ bash ./gradlew :takina-examples:runSmokeClientExample
 ## 编译
 
 ```bash
-bash ./gradlew :takina-core:allTests :takina-examples:compileKotlinJvm
+./gradlew :takina-core:allTests :takina-examples:compileKotlinJvm
 ```
 
 ## 更多信息
@@ -209,4 +209,4 @@ bash ./gradlew :takina-core:allTests :takina-examples:compileKotlinJvm
 
 版权所有 (c) 2024 - 2026 Atori Apps。
 
-本项目暂且使用 MIT 许可证。
+本项目暂且使用 **MIT 许可证**。

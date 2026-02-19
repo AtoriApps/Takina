@@ -26,15 +26,29 @@ class StreamManagementComponent internal constructor(
     var autoReconnectOnConnectionDropped: Boolean = true
     var autoReconnectMaxAttempts: Int = 3
     var autoAckRequestInterval: Int = 10
+    var persistStateToStore: Boolean = false
+    var restorePersistedStateOnStartup: Boolean = false
+    var stateStore: StreamManagementStateStore? = null
 
     private val statesByJid = linkedMapOf<BareJid, SessionState>()
+    private val jidByState = linkedMapOf<SessionState, BareJid>()
 
     @Synchronized
-    fun stateFor(jid: BareJid): SessionState = statesByJid.getOrPut(jid) { SessionState() }
+    fun stateFor(jid: BareJid): SessionState {
+        statesByJid[jid]?.let { return it }
+
+        val state = SessionState()
+        statesByJid[jid] = state
+        jidByState[state] = jid
+        restoreFromStoreIfNeeded(jid, state)
+        return state
+    }
 
     @Synchronized
     fun clearState(jid: BareJid) {
-        statesByJid.remove(jid)
+        val state = statesByJid.remove(jid)
+        if (state != null) jidByState.remove(state)
+        stateStore?.clear(jid)
     }
 
     fun enable(
@@ -122,6 +136,8 @@ class StreamManagementComponent internal constructor(
             xml = xml,
         )
         state.outboundSentCount
+    }.also {
+        persistStateIfNeeded(state)
     }
 
     fun onInboundStanzaHandled(state: SessionState): Long = synchronized(state) {
@@ -140,6 +156,8 @@ class StreamManagementComponent internal constructor(
             state.awaitingServerAckReply = false
             state.outboundSinceAckRequest = 0
             state.lastServerAckCount
+        }.also {
+            persistStateIfNeeded(state)
         }
     }
 
@@ -288,6 +306,7 @@ class StreamManagementComponent internal constructor(
                 state.lastResumePreviousId = null
             }
         }
+        persistStateIfNeeded(state)
     }
 
     fun onInboundFrame(jid: BareJid, xml: String): InboundFrame? {
@@ -299,6 +318,70 @@ class StreamManagementComponent internal constructor(
     private fun isSmNamespace(attributes: Map<String, String>): Boolean {
         if (attributes["xmlns"] == NAMESPACE) return true
         return attributes.any { (key, value) -> key.startsWith("xmlns:") && value == NAMESPACE }
+    }
+
+    private fun restoreFromStoreIfNeeded(
+        jid: BareJid,
+        state: SessionState,
+    ) {
+        if (!restorePersistedStateOnStartup) return
+        val persisted = stateStore?.load(jid) ?: return
+        if (persisted.sessionId.isBlank()) return
+        if (!persisted.allowResume) return
+        if (persisted.lastServerAckCount < 0L || persisted.outboundSentCount < persisted.lastServerAckCount) return
+
+        synchronized(state) {
+            state.enabled = true
+            state.resumed = false
+            state.sessionId = persisted.sessionId
+            state.allowResume = true
+            state.maxResumeSeconds = persisted.maxResumeSeconds
+            state.outboundSentCount = persisted.outboundSentCount
+            state.inboundHandledCount = 0
+            state.lastServerAckCount = persisted.lastServerAckCount
+            state.enableRequested = false
+            state.resumeRequested = false
+            state.lastResumePreviousId = null
+            state.awaitingServerAckReply = false
+            state.outboundSinceAckRequest = 0
+            state.pendingOutbound.clear()
+
+            var sequence = persisted.lastServerAckCount
+            persisted.pendingOutbound.forEach { xml ->
+                sequence += 1
+                state.pendingOutbound += PendingOutboundStanza(sequence = sequence, xml = xml)
+            }
+            if (sequence > state.outboundSentCount) {
+                state.outboundSentCount = sequence
+            }
+        }
+    }
+
+    private fun persistStateIfNeeded(state: SessionState) {
+        if (!persistStateToStore) return
+        val store = stateStore ?: return
+        val jid = synchronized(this) { jidByState[state] } ?: return
+
+        val snapshot = synchronized(state) {
+            if (!state.enabled) return@synchronized null
+            val sessionId = state.sessionId ?: return@synchronized null
+            if (!state.allowResume) return@synchronized null
+
+            PersistedSessionState(
+                sessionId = sessionId,
+                allowResume = state.allowResume,
+                maxResumeSeconds = state.maxResumeSeconds,
+                outboundSentCount = state.outboundSentCount,
+                lastServerAckCount = state.lastServerAckCount,
+                pendingOutbound = state.pendingOutbound.map { it.xml },
+            )
+        }
+
+        if (snapshot == null) {
+            store.clear(jid)
+        } else {
+            store.save(jid, snapshot)
+        }
     }
 
     sealed interface InboundFrame {
@@ -362,6 +445,25 @@ class StreamManagementComponent internal constructor(
         val sequence: Long,
         val xml: String,
     )
+
+    data class PersistedSessionState(
+        val sessionId: String,
+        val allowResume: Boolean,
+        val maxResumeSeconds: Int?,
+        val outboundSentCount: Long,
+        val lastServerAckCount: Long,
+        val pendingOutbound: List<String>,
+    )
+
+    interface StreamManagementStateStore {
+        fun load(jid: BareJid): PersistedSessionState?
+        fun save(
+            jid: BareJid,
+            state: PersistedSessionState,
+        )
+
+        fun clear(jid: BareJid)
+    }
 }
 
 fun TakinaContext.streamManagement(): StreamManagementComponent = requireComponent(StreamManagementComponent)

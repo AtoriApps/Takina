@@ -47,6 +47,7 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 
 * `DiscoveryComponent`：XEP-0030（disco#info）与基础软件版本请求封装。
 * `CapabilitiesComponent`：XEP-0115 caps 节点构造与 presence 载荷解析。
+* `CarbonsComponent`：XEP-0280 Carbons 启用/关闭与转发消息解析。
 * `MessageReceiptsComponent`：XEP-0184 回执请求/回执确认载荷构造、消息解析与自动回执策略。
 * `StreamManagementComponent`：XEP-0198 基础模型（enable/resume/a/r 构造、帧解析、计数状态跟踪、自动确认请求与重连恢复基础流程）。
 
@@ -95,7 +96,7 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 | [XEP-0249 Direct MUC Invitations](https://xmpp.org/extensions/xep-0249.html) | 未实现（待办） | 依赖 MUC 能力。 |
 | [XEP-0260 Jingle SOCKS5 Bytestreams Transport Method](https://xmpp.org/extensions/xep-0260.html) | 未实现（待办） | 依赖 Jingle 文件传输栈。 |
 | [XEP-0261 Jingle In-Band Bytestreams Transport Method](https://xmpp.org/extensions/xep-0261.html) | 未实现（待办） | 依赖 Jingle 文件传输栈。 |
-| [XEP-0280 Message Carbons](https://xmpp.org/extensions/xep-0280.html) | 未实现（待办） | 尚无 enable/disable 与多端同步封装。 |
+| [XEP-0280 Message Carbons](https://xmpp.org/extensions/xep-0280.html) | 部分实现 | 已通过 `CarbonsComponent` 提供 enable/disable IQ API（支持 await result）与转发消息封装解析（`sent`/`received` + `forwarded`）；支持连接后自动发送 enable。 |
 | [XEP-0313 Message Archive Management](https://xmpp.org/extensions/xep-0313.html) | 未实现（待办） | 尚无查询分页、结果集处理 API。 |
 | [XEP-0333 Chat Markers](https://xmpp.org/extensions/xep-0333.html) | 未实现（待办） | 尚无 marker 发送与状态管理。 |
 | [XEP-0352 Client State Indication](https://xmpp.org/extensions/xep-0352.html) | 未实现（待办） | 尚无 CSI active/inactive 生命周期接口。 |
@@ -105,7 +106,7 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 * 阶段：**基础客户端内核可用（早期开发阶段）**。
 * 已具备：多账号连接管理、TLS/PLAIN 基础认证链路、message/presence/iq 基础收发、IQ 请求等待结果（await）、事件总线与连接阶段事件。
 * 已验证：可完成本地与公网服务器的基础冒烟流程（登录、presence、disco 请求与接收）。
-* 尚不具备：MUC、Roster、MAM、Carbons、Jingle/文件传输等关键高级能力，以及 SM 的跨进程持久化恢复与严格一致性保障。
+* 尚不具备：MUC、Roster、MAM、Jingle/文件传输等关键高级能力，以及 SM 的跨进程持久化恢复与严格一致性保障。
 * 稳定性说明：当前 API 仍在迭代期，后续可能有不兼容调整（会在 README/Release Notes 同步）。
 
 Takina 仍在积极开发中，功能列表会不断更新。如果您对她的功能和支持的 XEP 有任何要求、建议或意见，都可以发 `Issue` 告诉我们。
@@ -197,6 +198,32 @@ takina.events.on(StanzaReceivedEvent) { event ->
 }
 ```
 
+### Message Carbons（XEP-0280）
+
+`CarbonsComponent` 支持连接后自动发送 enable（默认开启），也支持手动启用/关闭与 `await result`：
+
+```kotlin
+import org.atoriapps.takina.core.components.CarbonsComponent
+import org.atoriapps.takina.core.components.carbons
+import org.atoriapps.takina.core.events.StanzaReceivedEvent
+
+createTakina(registerAllComponents = false) {
+  registerComponent(CarbonsComponent)
+  onConfigureComponent(CarbonsComponent) {
+    autoEnableOnConnect = true
+  }
+}
+
+// 手动启用并等待结果
+// val result = takina.carbons().enableAwait(from = demoUserJid).awaitResult()
+
+takina.events.on(StanzaReceivedEvent) { event ->
+  if (event.stanzaType != "message") return@on
+  val carbon = takina.carbons().parseEnvelope(event.xml) ?: return@on
+  println("carbons=${carbon.frame} forwarded=${carbon.forwardedMessageXml}")
+}
+```
+
 ### Stream Management 调优（XEP-0198）
 
 可通过组件配置调整 SM 行为：
@@ -211,6 +238,51 @@ createTakina(registerAllComponents = false) {
     autoReconnectMaxAttempts = 3
     // 每累计多少个出站 stanza 自动发送一次 <r/> 请求服务端确认（默认 10，<=0 关闭）
     autoAckRequestInterval = 10
+  }
+}
+```
+
+### 跨进程恢复（由使用方提供存储）
+
+Takina 的 SM 跨进程恢复遵循以下职责划分：
+
+* Takina：负责恢复流程（读取状态后尝试 `resume`、失败回退 `enable`、必要时重放未确认消息）。
+* 使用方：负责状态持久化实现（文件、数据库、KeyValue、加密策略、TTL 清理等）。
+
+组件提供 `StreamManagementStateStore` 接口，使用方注入实现并按需开启两个开关：
+
+* `persistStateToStore`：是否在 SM 状态变化时写入 store。
+* `restorePersistedStateOnStartup`：是否在新进程启动后优先从 store 恢复状态。
+
+```kotlin
+import org.atoriapps.takina.core.components.StreamManagementComponent
+import org.atoriapps.takina.core.xmpp.BareJid
+
+class MySmStore : StreamManagementComponent.StreamManagementStateStore {
+  private val data = linkedMapOf<String, StreamManagementComponent.PersistedSessionState>()
+
+  override fun load(jid: BareJid): StreamManagementComponent.PersistedSessionState? = data[jid.toString()]
+
+  override fun save(
+    jid: BareJid,
+    state: StreamManagementComponent.PersistedSessionState,
+  ) {
+    data[jid.toString()] = state
+  }
+
+  override fun clear(jid: BareJid) {
+    data.remove(jid.toString())
+  }
+}
+
+val smStore = MySmStore()
+
+createTakina(registerAllComponents = false) {
+  registerComponent(StreamManagementComponent)
+  onConfigureComponent(StreamManagementComponent) {
+    stateStore = smStore
+    persistStateToStore = true
+    restorePersistedStateOnStartup = true
   }
 }
 ```

@@ -4,6 +4,7 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.TakinaComponent
 import org.atoriapps.takina.core.components.TakinaComponentProvider
+import org.atoriapps.takina.core.components.CarbonsComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.connections.IqResult
@@ -165,6 +166,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
             LogUtils.debug(TAG, "开始连接账号", jid)
             connection.connect()
             negotiateStreamManagementAfterConnect(connection)
+            maybeEnableCarbonsAfterConnect(connection)
             LogUtils.info(TAG, "账号连接成功", jid)
             events.emit(ConnectionConnectedEvent(jid))
             true
@@ -424,6 +426,17 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         }
 
         LogUtils.warn(TAG, "SM 自动重连次数已达上限", jid, "max=${sm.autoReconnectMaxAttempts}")
+    }
+
+    private fun maybeEnableCarbonsAfterConnect(connection: TakinaConnection) {
+        val carbons = findComponent(CarbonsComponent) ?: return
+        if (!carbons.autoEnableOnConnect) return
+        runCatching {
+            carbons.enable(from = connection.boundJid).send()
+            LogUtils.debug(TAG, "已发送 Message Carbons enable", connection.boundJid)
+        }.onFailure { error ->
+            LogUtils.warn(TAG, "发送 Message Carbons enable 失败", connection.boundJid, error.message ?: "未知错误")
+        }
     }
 
     private fun maybeAutoReplyReceipt(connection: TakinaConnection, inboundXml: String) {

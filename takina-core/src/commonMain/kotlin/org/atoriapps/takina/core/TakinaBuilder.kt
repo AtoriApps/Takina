@@ -2,6 +2,7 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.DiscoveryComponent
 import org.atoriapps.takina.core.components.CapabilitiesComponent
+import org.atoriapps.takina.core.components.CarbonsComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.TakinaComponent
@@ -49,6 +50,7 @@ class TakinaConfiguration {
     // 可选组件
     internal fun registerOptionalComponents() {
         registerComponent(CapabilitiesComponent)
+        registerComponent(CarbonsComponent)
         registerComponent(DiscoveryComponent)
         registerComponent(MessageReceiptsComponent)
         registerComponent(StreamManagementComponent)

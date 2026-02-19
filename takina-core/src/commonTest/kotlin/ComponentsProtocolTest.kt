@@ -1,9 +1,11 @@
 package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.CapabilitiesComponent
+import org.atoriapps.takina.core.components.CarbonsComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.capabilities
+import org.atoriapps.takina.core.components.carbons
 import org.atoriapps.takina.core.components.receipts
 import org.atoriapps.takina.core.components.streamManagement
 import org.atoriapps.takina.core.xmpp.toBareJid
@@ -148,6 +150,105 @@ class ComponentsProtocolTest {
     }
 
     @Test
+    fun streamManagementComponent_shouldPersistAndRestoreStateViaStore() {
+        val jid = "alice@example.com".toBareJid()
+        val store = InMemorySmStore()
+
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(StreamManagementComponent)
+            onConfigureComponent(StreamManagementComponent) {
+                stateStore = store
+                persistStateToStore = true
+                restorePersistedStateOnStartup = true
+            }
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val sm = takina.streamManagement()
+        val state = sm.stateFor(jid)
+        val enabled = sm.parseInboundFrame("<enabled xmlns='urn:xmpp:sm:3' id='sm-persist' resume='true' max='120'/>")
+        assertIs<StreamManagementComponent.InboundFrame.Enabled>(enabled)
+        sm.applyInboundFrame(state, enabled)
+        sm.onOutboundStanzaSent(state, "<message id='m1'/>")
+        sm.onOutboundStanzaSent(state, "<message id='m2'/>")
+        sm.onOutboundStanzaSent(state, "<iq id='i3'/>")
+        val ack = sm.parseInboundFrame("<a xmlns='urn:xmpp:sm:3' h='2'/>")
+        assertIs<StreamManagementComponent.InboundFrame.Acknowledged>(ack)
+        sm.applyInboundFrame(state, ack)
+
+        val persisted = store.load(jid)
+        assertNotNull(persisted)
+        assertEquals("sm-persist", persisted.sessionId)
+        assertEquals(3, persisted.outboundSentCount)
+        assertEquals(2, persisted.lastServerAckCount)
+        assertEquals(listOf("<iq id='i3'/>"), persisted.pendingOutbound)
+
+        val takinaRestored = createTakina(registerAllComponents = false) {
+            registerComponent(StreamManagementComponent)
+            onConfigureComponent(StreamManagementComponent) {
+                stateStore = store
+                persistStateToStore = true
+                restorePersistedStateOnStartup = true
+            }
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val smRestored = takinaRestored.streamManagement()
+        val restoredState = smRestored.stateFor(jid)
+        assertTrue(restoredState.enabled)
+        assertEquals("sm-persist", restoredState.sessionId)
+        assertTrue(restoredState.allowResume)
+        assertEquals(3, restoredState.outboundSentCount)
+        assertEquals(2, restoredState.lastServerAckCount)
+        assertEquals(listOf("<iq id='i3'/>"), smRestored.snapshotUnackedForResume(restoredState))
+
+        smRestored.clearState(jid)
+        assertEquals(null, store.load(jid))
+    }
+
+    @Test
+    fun streamManagementComponent_shouldNotRestoreWhenFlagDisabled() {
+        val jid = "alice@example.com".toBareJid()
+        val store = InMemorySmStore()
+        store.save(
+            jid,
+            StreamManagementComponent.PersistedSessionState(
+                sessionId = "sm-manual",
+                allowResume = true,
+                maxResumeSeconds = 120,
+                outboundSentCount = 5,
+                lastServerAckCount = 4,
+                pendingOutbound = listOf("<message id='m5'/>"),
+            ),
+        )
+
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(StreamManagementComponent)
+            onConfigureComponent(StreamManagementComponent) {
+                stateStore = store
+                persistStateToStore = true
+                restorePersistedStateOnStartup = false
+            }
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val sm = takina.streamManagement()
+        val state = sm.stateFor(jid)
+        assertFalse(state.enabled)
+        assertEquals(null, state.sessionId)
+        assertEquals(emptyList(), sm.snapshotUnackedForResume(state))
+    }
+
+    @Test
     fun messageReceiptsComponent_shouldBuildAndParseFrames() {
         val jid = "alice@example.com".toBareJid()
         val takina = createTakina(registerAllComponents = false) {
@@ -186,5 +287,62 @@ class ComponentsProtocolTest {
         val parsed = receipts.parseFromMessageXml(receivedXml)
         assertIs<MessageReceiptsComponent.ReceiptFrame.Received>(parsed)
         assertEquals("msg-1", parsed.id)
+    }
+
+    @Test
+    fun carbonsComponent_shouldBuildIqAndParseForwardedMessage() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(CarbonsComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val carbons = takina.carbons()
+        val enableXml = carbons.enable(from = jid).toXml()
+        assertTrue(enableXml.contains("<iq"))
+        assertTrue(enableXml.contains("type='set'"))
+        assertTrue(enableXml.contains("<enable xmlns='urn:xmpp:carbons:2'/>"))
+
+        val disableXml = carbons.disable(from = jid).toXml()
+        assertTrue(disableXml.contains("<disable xmlns='urn:xmpp:carbons:2'/>"))
+
+        val incoming = """
+            <message from='alice@example.com/mobile' to='alice@example.com/desktop' type='chat'>
+              <received xmlns='urn:xmpp:carbons:2'>
+                <forwarded xmlns='urn:xmpp:forward:0'>
+                  <delay xmlns='urn:xmpp:delay' stamp='2026-02-19T10:00:00Z'/>
+                  <message from='bob@example.com/phone' to='alice@example.com/mobile' type='chat' id='msg-1'>
+                    <body>hello from phone</body>
+                  </message>
+                </forwarded>
+              </received>
+            </message>
+        """.trimIndent()
+
+        val parsed = carbons.parseEnvelope(incoming)
+        assertNotNull(parsed)
+        assertEquals(CarbonsComponent.CarbonFrame.Received, parsed.frame)
+        assertTrue(parsed.forwardedMessageXml.contains("id='msg-1'"))
+        assertTrue(parsed.forwardedMessageXml.contains("<body>hello from phone</body>"))
+    }
+
+    private class InMemorySmStore : StreamManagementComponent.StreamManagementStateStore {
+        private val data = linkedMapOf<String, StreamManagementComponent.PersistedSessionState>()
+
+        override fun load(jid: org.atoriapps.takina.core.xmpp.BareJid): StreamManagementComponent.PersistedSessionState? = data[jid.toString()]
+
+        override fun save(
+            jid: org.atoriapps.takina.core.xmpp.BareJid,
+            state: StreamManagementComponent.PersistedSessionState,
+        ) {
+            data[jid.toString()] = state
+        }
+
+        override fun clear(jid: org.atoriapps.takina.core.xmpp.BareJid) {
+            data.remove(jid.toString())
+        }
     }
 }

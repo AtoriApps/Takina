@@ -2,6 +2,7 @@ package org.atoriapps.takina.examples
 
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.CarbonsComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.discovery
@@ -34,6 +35,7 @@ fun main() {
 
     val takina = createTakina(registerAllComponents = false) {
         registerComponent(DiscoveryComponent)
+        registerComponent(CarbonsComponent)
         registerComponent(StreamManagementComponent)
         registerComponent(MessageReceiptsComponent)
         addAccount {

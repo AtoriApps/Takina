@@ -1,6 +1,8 @@
 package org.atoriapps.takina.core
 
+import org.atoriapps.takina.core.components.CapabilitiesComponent
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.discovery
 import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.SecurityMode
@@ -178,6 +180,8 @@ class CommonInitTest {
             }
         }
 
+        assertNotNull(takina.findComponent(CapabilitiesComponent))
         assertNotNull(takina.findComponent(DiscoveryComponent))
+        assertNotNull(takina.findComponent(StreamManagementComponent))
     }
 }

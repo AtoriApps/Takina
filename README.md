@@ -43,6 +43,12 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 
 当前 `createTakina(registerAllComponents = ...)` 已预留“核心 + 可选组件”加载模型。后续新增协议能力时，默认应优先落在可选组件中；只有跨组件共享的底座逻辑才进入核心能力层。
 
+当前内置可选组件（截至 2026-02-19）：
+
+* `DiscoveryComponent`：XEP-0030（disco#info）与基础软件版本请求封装。
+* `CapabilitiesComponent`：XEP-0115 caps 节点构造与 presence 载荷解析。
+* `StreamManagementComponent`：XEP-0198 基础模型（enable/resume/a/r 构造、帧解析、计数状态跟踪）。
+
 ## 功能特性
 
 我们的目标是打造 [合规性测试](https://xmpp.org/extensions/xep-0479.html) 中打平甚至超越 [Conversations](https://codeberg.org/iNPUTmice/Conversations) 水准的库和 [客户端](https://github.com/AtoriApps/Atori)。
@@ -76,12 +82,12 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 | [XEP-0045 Multi-User Chat](https://xmpp.org/extensions/xep-0045.html) | 未实现（待办） | 尚无 MUC 加入、成员管理、房间事件模型。 |
 | [XEP-0048 Bookmarks](https://xmpp.org/extensions/xep-0048.html) | 未实现（待办） | 尚无书签读写 API。 |
 | [XEP-0084 User Avatar](https://xmpp.org/extensions/xep-0084.html) | 未实现（待办） | 尚无头像元数据/二进制发布与订阅。 |
-| [XEP-0115 Entity Capabilities](https://xmpp.org/extensions/xep-0115.html) | 部分实现 | 已支持 `c` 元素构造与透传；未实现完整能力哈希计算与校验流程。 |
+| [XEP-0115 Entity Capabilities](https://xmpp.org/extensions/xep-0115.html) | 部分实现 | 已通过 `CapabilitiesComponent` 支持 `c` 元素构造与 presence 中 caps 解析；未实现完整能力哈希计算与校验流程。 |
 | [XEP-0163 Personal Eventing Protocol](https://xmpp.org/extensions/xep-0163.html) | 未实现（待办） | 尚无 PEP 节点管理与事件路由抽象。 |
 | [XEP-0166 Jingle](https://xmpp.org/extensions/xep-0166.html) | 未实现（待办） | 尚无会话协商模型。 |
 | [XEP-0184 Message Delivery Receipts](https://xmpp.org/extensions/xep-0184.html) | 未实现（待办） | 尚无回执请求与回执处理。 |
 | [XEP-0191 Blocking Command](https://xmpp.org/extensions/xep-0191.html) | 未实现（待办） | 尚无阻止名单管理 API。 |
-| [XEP-0198 Stream Management](https://xmpp.org/extensions/xep-0198.html) | 未实现（待办） | 尚无 stanza ack、会话恢复与自动重连语义。 |
+| [XEP-0198 Stream Management](https://xmpp.org/extensions/xep-0198.html) | 部分实现 | 已通过 `StreamManagementComponent` 提供 enable/resume/a/r 构造、SM 帧解析、基础计数状态；尚未接入自动重连与透明恢复。 |
 | [XEP-0234 Jingle File Transfer](https://xmpp.org/extensions/xep-0234.html) | 未实现（待办） | 依赖 Jingle 基础能力。 |
 | [XEP-0237 Roster Versioning](https://xmpp.org/extensions/xep-0237.html) | 未实现（待办） | 依赖 roster 子系统。 |
 | [XEP-0245 The /me Command](https://xmpp.org/extensions/xep-0245.html) | 未实现（待办） | 尚无 `/me` 专用 builder/语义封装。 |
@@ -98,7 +104,7 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 * 阶段：**基础客户端内核可用（早期开发阶段）**。
 * 已具备：多账号连接管理、TLS/PLAIN 基础认证链路、message/presence/iq 基础收发、IQ 请求等待结果（await）、事件总线与连接阶段事件。
 * 已验证：可完成本地与公网服务器的基础冒烟流程（登录、presence、disco 请求与接收）。
-* 尚不具备：MUC、Roster、MAM、Carbons、SM 重连恢复、Jingle/文件传输等关键高级能力。
+* 尚不具备：MUC、Roster、MAM、Carbons、SM 自动重连恢复、Jingle/文件传输等关键高级能力。
 * 稳定性说明：当前 API 仍在迭代期，后续可能有不兼容调整（会在 README/Release Notes 同步）。
 
 Takina 仍在积极开发中，功能列表会不断更新。如果您对她的功能和支持的 XEP 有任何要求、建议或意见，都可以发 `Issue` 告诉我们。

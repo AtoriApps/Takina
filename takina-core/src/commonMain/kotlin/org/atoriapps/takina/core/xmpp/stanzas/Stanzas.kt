@@ -4,6 +4,7 @@ import org.atoriapps.takina.core.utils.IdUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlEscaper
 import org.atoriapps.takina.core.xmpp.Jid
+import org.atoriapps.takina.core.components.toCapsXmlElement
 
 sealed interface XmppStanza {
     val id: String
@@ -139,21 +140,18 @@ data class IqStanza(
     }
 }
 
-data class EntityCapabilities(
-    val node: String,
-    val ver: String,
-    val hash: String = "sha-1",
+@Deprecated(
+    message = "请改用 org.atoriapps.takina.core.components.EntityCapabilities",
+    replaceWith = ReplaceWith("org.atoriapps.takina.core.components.EntityCapabilities"),
 )
+typealias EntityCapabilities = org.atoriapps.takina.core.components.EntityCapabilities
 
-fun EntityCapabilities.toXmlElement(): XmlElement = XmlElement(
-    name = "c",
-    namespace = "http://jabber.org/protocol/caps",
-    attributes = mapOf(
-        "hash" to hash,
-        "node" to node,
-        "ver" to ver,
-    ),
+@Deprecated(
+    message = "请改用 org.atoriapps.takina.core.components.toCapsXmlElement",
+    replaceWith = ReplaceWith("this.toCapsXmlElement()"),
 )
+@Suppress("DEPRECATION")
+fun EntityCapabilities.toXmlElement(): XmlElement = toCapsXmlElement()
 
 fun discoInfoIq(
     id: String = IdUtils.newStanzaId("disco"),

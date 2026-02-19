@@ -1,6 +1,8 @@
 package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.CapabilitiesComponent
+import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.TakinaComponent
 import org.atoriapps.takina.core.components.TakinaComponentProvider
 import org.atoriapps.takina.core.connections.ConnectionConfig
@@ -45,7 +47,9 @@ class TakinaConfiguration {
 
     // 可选组件
     internal fun registerOptionalComponents() {
+        registerComponent(CapabilitiesComponent)
         registerComponent(DiscoveryComponent)
+        registerComponent(StreamManagementComponent)
     }
 
     fun addAccount(init: AccountConfiguration.() -> Unit) {

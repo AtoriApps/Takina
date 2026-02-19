@@ -128,6 +128,11 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         return connection.sendIqAndAwaitResult(stanza, timeoutMillis)
     }
 
+    internal fun sendRaw(from: Jid?, xml: String) {
+        val connection = resolveConnectedConnectionForOutbound(from?.bareJid)
+        connection.sendRaw(xml)
+    }
+
     private fun connectInternal(jid: BareJid): Boolean {
         val account = accountDefinitions[jid] ?: throw AccountNotFoundException("account $jid not found")
         val connection = accountConnections.getOrPut(jid) {

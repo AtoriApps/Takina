@@ -23,7 +23,6 @@ fun Jid.copy(resource: String?): Jid = createJid(userName = userName, domain = d
 fun String.toJid(): Jid = parseJid(this).toJid()
 fun String.toFullJid(): FullJid = parseJid(this).toFullJid()
 fun String.toBareJid(): BareJid = parseJid(this).toBareJid()
-fun String.toBareJID(): BareJid = toBareJid()
 
 fun createJid(userName: String? = null, domain: String, resource: String? = null): Jid {
     val parsed = ParsedJid(
@@ -46,8 +45,7 @@ private data class ParsedJid(
     val resource: String?,
 ) {
     fun toJid(): Jid = if (resource == null) BareJid(userName, domain) else FullJid(BareJid(userName, domain), resource)
-    fun toFullJid(): FullJid = resource?.let { FullJid(BareJid(userName, domain), it) }
-        ?: throw JidFormatException("full JID requires a resource")
+    fun toFullJid(): FullJid = resource?.let { FullJid(BareJid(userName, domain), it) } ?: throw JidFormatException("full JID requires a resource")
     fun toBareJid(): BareJid = BareJid(userName, domain)
 }
 

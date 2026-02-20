@@ -2,6 +2,8 @@ package org.atoriapps.takina.core.components
 
 import org.atoriapps.takina.core.AbstractTakina
 import org.atoriapps.takina.core.TakinaContext
+import org.atoriapps.takina.core.connections.TakinaConnection
+import org.atoriapps.takina.core.utils.LogUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xmpp.BareJid
@@ -10,8 +12,10 @@ import kotlin.math.min
 
 class StreamManagementComponent internal constructor(
     private val takina: AbstractTakina,
-) : TakinaComponent {
+) : TakinaConnectionLifecycleComponent, TakinaInboundFrameInterceptor, TakinaInboundStanzaInterceptor, TakinaOutboundFrameObserver {
     companion object : TakinaComponentProvider<StreamManagementComponent> {
+        private const val TAG = "StreamManagementComponent"
+
         const val NAMESPACE: String = "urn:xmpp:sm:3"
 
         override fun getInstance(context: TakinaContext): StreamManagementComponent {
@@ -33,6 +37,101 @@ class StreamManagementComponent internal constructor(
 
     private val statesByJid = linkedMapOf<BareJid, SessionState>()
     private val jidByState = linkedMapOf<SessionState, BareJid>()
+    override val priority: Int = 100
+
+    override fun onAfterConnected(connection: TakinaConnection, context: TakinaContext) {
+        if (!connection.supportsStreamManagement) return LogUtils.debug(TAG, "服务端未宣告 SM，跳过协商", connection.boundJid)
+        val state = stateFor(connection.boundJid)
+        resetReconnectAttempts(state)
+        val previousId = state.sessionId
+        val canResume = state.enabled && state.allowResume && !previousId.isNullOrBlank()
+        if (canResume) {
+            runCatching {
+                markResumeRequested(state, previousId)
+                sendResume(from = connection.boundJid, previousId = previousId, handledByServer = state.lastServerAckCount)
+                LogUtils.debug(TAG, "已发送 Stream Management resume", connection.boundJid, "previd=$previousId", "h=${state.lastServerAckCount}")
+            }.onFailure { error ->
+                LogUtils.warn(TAG, "发送 Stream Management resume 失败，回退 enable", connection.boundJid, error.message ?: "未知错误")
+                sendEnableInternal(connection.boundJid)
+            }
+
+            return
+        }
+        sendEnableInternal(connection.boundJid)
+    }
+
+    override fun onBeforeDisconnect(jid: BareJid, context: TakinaContext) {
+        clearState(jid)
+    }
+
+    override fun onAfterDisconnected(jid: BareJid, reason: String?, context: TakinaContext) {
+        if (reason.isNullOrBlank()) return
+        if (!autoReconnectOnConnectionDropped) return
+        val state = stateFor(jid)
+        while (shouldAutoReconnect(state)) {
+            val attempt = markReconnectAttempt(state)
+            LogUtils.warn(TAG, "SM 自动重连开始", jid, "attempt=$attempt")
+            val result = runCatching { takina.connect(jid) }
+            if (result.isSuccess) return LogUtils.warn(TAG, "SM 自动重连成功", jid, "attempt=$attempt")
+            LogUtils.warn(TAG, "SM 自动重连失败", jid, "attempt=$attempt", result.exceptionOrNull()?.message ?: "未知错误")
+            if (autoReconnectDelayMillis > 0 && shouldAutoReconnect(state)) runCatching { Thread.sleep(autoReconnectDelayMillis.toLong()) }
+        }
+        LogUtils.warn(TAG, "SM 自动重连次数已达上限", jid, "max=$autoReconnectMaxAttempts")
+    }
+
+    override fun interceptInboundStanza(
+        connection: TakinaConnection,
+        stanzaType: String,
+        xml: String,
+        context: TakinaContext,
+    ): TakinaInboundStanzaInterceptResult {
+        onInboundStanzaHandled(stateFor(connection.boundJid))
+        return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
+    }
+
+    override fun interceptInboundFrame(connection: TakinaConnection, xml: String, context: TakinaContext): TakinaFrameInterceptResult {
+        val frame = onInboundFrame(connection.boundJid, xml) ?: return TakinaFrameInterceptResult(xml = xml)
+        when (frame) {
+            is InboundFrame.Enabled -> {
+                LogUtils.warn(TAG, "Stream Management 已启用", connection.boundJid, "sessionId=${frame.id ?: "<none>"}", "resume=${frame.allowResume}")
+                replayPendingAfterEnable(connection)
+            }
+
+            is InboundFrame.Resumed -> {
+                LogUtils.warn(TAG, "Stream Management 已恢复", connection.boundJid, "acked=${frame.handledByServer}")
+                replayUnackedAfterResume(connection)
+            }
+
+            is InboundFrame.Acknowledged ->
+                LogUtils.debug(TAG, "收到服务端确认", connection.boundJid, "acked=${frame.handledByServer}")
+
+            InboundFrame.AckRequest -> {
+                val state = stateFor(connection.boundJid)
+                sendAck(from = connection.boundJid, handledByClient = state.inboundHandledCount)
+                LogUtils.debug(TAG, "收到服务端 Ack 请求并已响应", connection.boundJid, "h=${state.inboundHandledCount}")
+            }
+
+            is InboundFrame.Failed -> {
+                LogUtils.warn(TAG, "Stream Management 失败", connection.boundJid, "acked=${frame.handledByServer ?: "<none>"}")
+                sendEnableInternal(connection.boundJid)
+            }
+        }
+        return TakinaFrameInterceptResult(xml = xml)
+    }
+
+    override fun onOutboundFrameSent(connection: TakinaConnection, xml: String, context: TakinaContext) {
+        val root = org.atoriapps.takina.core.connections.XmppProtocol.rootName(xml)
+        if (root != "message" && root != "presence" && root != "iq") return
+        val jid = connection.boundJid
+        val state = stateFor(jid)
+        onOutboundStanzaSent(state, xml)
+        if (!shouldSendAckRequest(state)) return
+        runCatching {
+            sendAckRequest(from = jid)
+            markAckRequestSent(state)
+            LogUtils.debug(TAG, "已发送服务端 Ack 请求", jid, "interval=$autoAckRequestInterval")
+        }.onFailure { error -> LogUtils.warn(TAG, "发送服务端 Ack 请求失败", jid, error.message ?: "未知错误") }
+    }
 
     @Synchronized
     fun stateFor(jid: BareJid): SessionState {
@@ -100,27 +199,57 @@ class StreamManagementComponent internal constructor(
         from: Jid? = null,
         allowResume: Boolean = true,
         maxResumeSeconds: Int? = null,
-    ) {
-        takina.sendRaw(from, enable(allowResume, maxResumeSeconds).toXmlString())
-    }
+    ) = takina.sendRaw(from, enable(allowResume, maxResumeSeconds).toXmlString())
 
     fun sendResume(
         from: Jid? = null,
         previousId: String,
         handledByServer: Long,
-    ) {
-        takina.sendRaw(from, resume(previousId, handledByServer).toXmlString())
-    }
+    ) = takina.sendRaw(from, resume(previousId, handledByServer).toXmlString())
 
-    fun sendAckRequest(from: Jid? = null) {
-        takina.sendRaw(from, ackRequest().toXmlString())
-    }
+    fun sendAckRequest(from: Jid? = null) = takina.sendRaw(from, ackRequest().toXmlString())
 
     fun sendAck(
         from: Jid? = null,
         handledByClient: Long,
-    ) {
-        takina.sendRaw(from, ack(handledByClient).toXmlString())
+    ) = takina.sendRaw(from, ack(handledByClient).toXmlString())
+
+    private fun sendEnableInternal(jid: BareJid) {
+        val state = stateFor(jid)
+        runCatching {
+            markEnableRequested(state)
+            sendEnable(from = jid, allowResume = true)
+            LogUtils.debug(TAG, "已发送 Stream Management enable", jid)
+        }.onFailure { error -> LogUtils.warn(TAG, "发送 Stream Management enable 失败", jid, error.message ?: "未知错误") }
+    }
+
+    private fun replayPendingAfterEnable(connection: TakinaConnection) {
+        val state = stateFor(connection.boundJid)
+        val replay = consumePendingReplayAfterEnable(state)
+        if (replay.isEmpty()) return
+        var sentCount = 0
+        runCatching {
+            replay.forEachIndexed { index, xml ->
+                takina.sendRaw(connection.boundJid, xml)
+                sentCount = index + 1
+            }
+            LogUtils.warn(TAG, "SM 新会话重放完成", connection.boundJid, "count=${replay.size}")
+        }.onFailure { error ->
+            val unsent = replay.drop(sentCount)
+            prependPendingReplayAfterEnable(state, unsent)
+            LogUtils.warn(TAG, "SM 新会话重放中断", connection.boundJid, "已发送=$sentCount", "剩余=${unsent.size}", error.message ?: "未知错误")
+        }
+    }
+
+    private fun replayUnackedAfterResume(connection: TakinaConnection) {
+        val state = stateFor(connection.boundJid)
+        val replay = snapshotUnackedForResume(state)
+        if (replay.isEmpty()) return
+        scheduleResumeReplay(state, replay)
+        runCatching {
+            replay.forEach { xml -> takina.sendRaw(connection.boundJid, xml) }
+            LogUtils.warn(TAG, "SM 会话恢复后重放完成", connection.boundJid, "count=${replay.size}")
+        }.onFailure { error -> LogUtils.warn(TAG, "SM 会话恢复后重放失败", connection.boundJid, error.message ?: "未知错误") }
     }
 
     fun onOutboundStanzaSent(state: SessionState, xml: String): Long = synchronized(state) {
@@ -137,9 +266,7 @@ class StreamManagementComponent internal constructor(
             xml = xml,
         )
         state.outboundSentCount
-    }.also {
-        persistStateIfNeeded(state)
-    }
+    }.also { persistStateIfNeeded(state) }
 
     fun onInboundStanzaHandled(state: SessionState): Long = synchronized(state) {
         state.inboundHandledCount += 1
@@ -157,9 +284,7 @@ class StreamManagementComponent internal constructor(
             state.awaitingServerAckReply = false
             state.outboundSinceAckRequest = 0
             state.lastServerAckCount
-        }.also {
-            persistStateIfNeeded(state)
-        }
+        }.also { persistStateIfNeeded(state) }
     }
 
     fun snapshotUnackedForResume(state: SessionState): List<String> = synchronized(state) {
@@ -241,8 +366,11 @@ class StreamManagementComponent internal constructor(
             )
 
             "a" -> parsed.attributes["h"]?.toLongOrNull()?.let { InboundFrame.Acknowledged(it) }
+
             "r" -> InboundFrame.AckRequest
+
             "failed" -> InboundFrame.Failed(parsed.attributes["h"]?.toLongOrNull())
+
             else -> null
         }
     }
@@ -307,6 +435,7 @@ class StreamManagementComponent internal constructor(
                 state.lastResumePreviousId = null
             }
         }
+
         persistStateIfNeeded(state)
     }
 
@@ -316,10 +445,9 @@ class StreamManagementComponent internal constructor(
         return frame
     }
 
-    private fun isSmNamespace(attributes: Map<String, String>): Boolean {
-        if (attributes["xmlns"] == NAMESPACE) return true
-        return attributes.any { (key, value) -> key.startsWith("xmlns:") && value == NAMESPACE }
-    }
+    private fun isSmNamespace(attributes: Map<String, String>): Boolean =
+        if (attributes["xmlns"] == NAMESPACE) true
+        else attributes.any { (key, value) -> key.startsWith("xmlns:") && value == NAMESPACE }
 
     private fun restoreFromStoreIfNeeded(
         jid: BareJid,
@@ -352,9 +480,8 @@ class StreamManagementComponent internal constructor(
                 sequence += 1
                 state.pendingOutbound += PendingOutboundStanza(sequence = sequence, xml = xml)
             }
-            if (sequence > state.outboundSentCount) {
-                state.outboundSentCount = sequence
-            }
+
+            if (sequence > state.outboundSentCount) state.outboundSentCount = sequence
         }
     }
 
@@ -378,11 +505,8 @@ class StreamManagementComponent internal constructor(
             )
         }
 
-        if (snapshot == null) {
-            store.clear(jid)
-        } else {
-            store.save(jid, snapshot)
-        }
+        if (snapshot == null) store.clear(jid)
+        else store.save(jid, snapshot)
     }
 
     sealed interface InboundFrame {
@@ -411,33 +535,49 @@ class StreamManagementComponent internal constructor(
     class SessionState {
         var enabled: Boolean = false
             internal set
+
         var resumed: Boolean = false
             internal set
+
         var sessionId: String? = null
             internal set
+
         var allowResume: Boolean = false
             internal set
+
         var maxResumeSeconds: Int? = null
             internal set
+
         var outboundSentCount: Long = 0
             internal set
+
         var inboundHandledCount: Long = 0
             internal set
+
         var lastServerAckCount: Long = 0
             internal set
+
         var enableRequested: Boolean = false
             internal set
+
         var resumeRequested: Boolean = false
             internal set
+
         var lastResumePreviousId: String? = null
             internal set
+
         var awaitingServerAckReply: Boolean = false
             internal set
+
         var outboundSinceAckRequest: Int = 0
             internal set
+
         internal val pendingOutbound: MutableList<PendingOutboundStanza> = mutableListOf()
+
         internal val pendingReplayAfterEnable: MutableList<String> = mutableListOf()
+
         internal val resumeReplayQueue: ArrayDeque<String> = ArrayDeque()
+
         var reconnectAttemptCount: Int = 0
             internal set
     }

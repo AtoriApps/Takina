@@ -4,9 +4,12 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.TakinaComponent
 import org.atoriapps.takina.core.components.TakinaComponentProvider
-import org.atoriapps.takina.core.components.CarbonsComponent
-import org.atoriapps.takina.core.components.MessageReceiptsComponent
-import org.atoriapps.takina.core.components.StreamManagementComponent
+import org.atoriapps.takina.core.components.TakinaConnectionLifecycleComponent
+import org.atoriapps.takina.core.components.TakinaFrameInterceptAction
+import org.atoriapps.takina.core.components.TakinaInboundFrameInterceptor
+import org.atoriapps.takina.core.components.TakinaInboundStanzaInterceptor
+import org.atoriapps.takina.core.components.TakinaOutboundFrameInterceptor
+import org.atoriapps.takina.core.components.TakinaOutboundFrameObserver
 import org.atoriapps.takina.core.connections.IqResult
 import org.atoriapps.takina.core.connections.TakinaConnection
 import org.atoriapps.takina.core.connections.ConnectionLifecycleStage
@@ -44,8 +47,8 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     private val components = mutableListOf<TakinaComponent>()
     private val componentsByType = linkedMapOf<KClass<out TakinaComponent>, TakinaComponent>()
     private val accountRuntime = AccountRuntime()
-    private val streamManagementRuntime = StreamManagementRuntime()
-    private val optionalFeaturesRuntime = OptionalFeaturesRuntime()
+    private val orderedComponents: List<TakinaComponent> get() = components.sortedByDescending { it.priority }
+    private var isShutdown: Boolean = false
 
     final override val configuredAccounts: List<BareJid> get() = accountRuntime.configuredAccounts
 
@@ -71,9 +74,15 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
             val bareJid = account.jid?.bareJid ?: error("account jid cannot be null")
             accountRuntime.addAccountDefinition(bareJid, account)
         }
+
+        orderedComponents.forEach { component ->
+            runCatching { component.onInstall(this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件安装回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
     }
 
     open fun connectAll() {
+        ensureNotShutdown()
         LogUtils.info(TAG, "开始连接全部账号", "总数=${accountRuntime.accountCount}")
         var connected = 0
         configuredAccounts.forEach { jid ->
@@ -89,30 +98,44 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         val connections = accountRuntime.activeConnections
         LogUtils.info(TAG, "开始断开全部账号连接", "连接数=${connections.size}")
         connections.forEach { connection ->
+            dispatchBeforeDisconnect(connection.boundJid)
             synchronized(connection) { if (connection.state != TakinaConnection.ConnectionState.DISCONNECTED) connection.disconnect() }
-            streamManagementRuntime.clearState(connection.boundJid)
+            dispatchAfterDisconnected(connection.boundJid, reason = null)
         }
         LogUtils.info(TAG, "全部账号已断开", "连接数=${connections.size}")
         events.emit(AllDisconnectedEvent(connectionCount = connections.size))
     }
 
+    open fun shutdown() {
+        synchronized(this) {
+            if (isShutdown) return
+            isShutdown = true
+        }
+        disconnectAll()
+        shutdownInstalledComponents()
+        events.shutdown()
+    }
+
     open fun connect(jid: Jid) {
+        ensureNotShutdown()
         connectInternal(jid.bareJid)
     }
 
     open fun disconnect(jid: Jid) {
+        dispatchBeforeDisconnect(jid.bareJid)
         accountRuntime.findConnection(jid.bareJid)?.let { connection ->
             synchronized(connection) { connection.disconnect() }
         }
-
-        streamManagementRuntime.clearState(jid.bareJid)
+        dispatchAfterDisconnected(jid.bareJid, reason = null)
     }
 
     internal fun sendMessage(stanza: MessageStanza) {
+        ensureNotShutdown()
         sendStanza(stanza.from, stanza)
     }
 
     internal fun sendStanza(stanza: XmppStanza) {
+        ensureNotShutdown()
         val from = when (stanza) {
             is MessageStanza -> stanza.from
             is PresenceStanza -> stanza.from
@@ -123,7 +146,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
 
     internal fun sendStanza(from: Jid?, stanza: XmppStanza) {
         val connection = resolveConnectedConnectionForOutbound(from?.bareJid)
-        connection.send(stanza)
+        sendRawWithInterceptors(connection, stanza.toXml())
     }
 
     internal suspend fun sendIqAndAwaitResult(
@@ -131,13 +154,15 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         stanza: IqStanza,
         timeoutMillis: Long,
     ): IqResult {
+        ensureNotShutdown()
         val connection = resolveConnectedConnectionForOutbound(from?.bareJid)
         return connection.sendIqAndAwaitResult(stanza, timeoutMillis)
     }
 
     internal fun sendRaw(from: Jid?, xml: String) {
+        ensureNotShutdown()
         val connection = resolveConnectedConnectionForOutbound(from?.bareJid)
-        connection.sendRaw(xml)
+        sendRawWithInterceptors(connection, xml)
     }
 
     private fun connectInternal(jid: BareJid): Boolean {
@@ -166,15 +191,16 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         return synchronized(connection) {
             if (connection.state == TakinaConnection.ConnectionState.CONNECTED) return@synchronized false
             try {
+                dispatchBeforeConnect(jid)
                 LogUtils.debug(TAG, "开始连接账号", jid)
                 connection.connect()
-                streamManagementRuntime.afterConnected(connection)
-                optionalFeaturesRuntime.afterConnected(connection)
+                dispatchAfterConnected(connection)
                 LogUtils.info(TAG, "账号连接成功", jid)
                 events.emit(ConnectionConnectedEvent(jid))
                 true
             } catch (t: Throwable) {
                 val reason = t.message ?: "未知连接错误"
+                dispatchAfterConnectFailed(jid, reason)
                 LogUtils.error(TAG, "账号连接异常", jid, reason)
                 events.emit(ConnectionFailedEvent(jid, reason))
                 throw t
@@ -195,13 +221,13 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     }
 
     private fun ensureConnectedConnection(jid: BareJid): TakinaConnection {
-        val current = accountRuntime.findConnection(jid)
-        if (current == null) return connectAndGet(jid)
+        val current = accountRuntime.findConnection(jid) ?: return connectAndGet(jid)
+
         if (current.state == TakinaConnection.ConnectionState.CONNECTED) return current
 
         connectInternal(jid)
-        val connected = accountRuntime.findConnection(jid)
-            ?: throw AccountNotFoundException("account $jid not found after reconnect")
+        val connected = accountRuntime.findConnection(jid) ?: throw AccountNotFoundException("account $jid not found after reconnect")
+
         if (connected.state != TakinaConnection.ConnectionState.CONNECTED) throw NotConnectedException("account $jid is not connected")
         return connected
     }
@@ -212,20 +238,21 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     }
 
     private fun handleInboundStanza(connection: TakinaConnection, xml: String) {
-        streamManagementRuntime.onInboundStanzaHandled(connection.boundJid)
         val stanzaType = org.atoriapps.takina.core.connections.XmppProtocol.rootName(xml)
-        if (stanzaType == "message") optionalFeaturesRuntime.onInboundMessage(connection, xml)
-        events.emit(StanzaReceivedEvent(connection.boundJid, stanzaType, xml))
+        val intercepted = applyInboundStanzaInterceptors(connection, stanzaType, xml) ?: return
+        events.emit(StanzaReceivedEvent(connection.boundJid, intercepted.first, intercepted.second))
     }
 
-    private fun handleInboundFrame(connection: TakinaConnection, xml: String) = streamManagementRuntime.onInboundFrame(connection, xml)
+    private fun handleInboundFrame(connection: TakinaConnection, xml: String) {
+        applyInboundFrameInterceptors(connection, xml)
+    }
 
-    private fun handleOutboundFrame(connection: TakinaConnection, xml: String) = streamManagementRuntime.onOutboundFrame(connection, xml)
+    private fun handleOutboundFrame(connection: TakinaConnection, xml: String) = dispatchOutboundFrameSent(connection, xml)
 
     private fun handleConnectionClosed(connection: TakinaConnection, reason: String) {
         LogUtils.warn(TAG, "连接已关闭", connection.boundJid, reason)
         events.emit(ConnectionClosedEvent(connection.boundJid, reason))
-        streamManagementRuntime.onConnectionClosed(connection.boundJid)
+        dispatchAfterDisconnected(connection.boundJid, reason)
     }
 
     private fun handleConnectionStageChanged(
@@ -234,7 +261,130 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         newStage: ConnectionLifecycleStage,
     ) {
         LogUtils.debug(TAG, "连接阶段变化", connection.boundJid, "${oldStage.name} -> ${newStage.name}")
+        dispatchConnectionStageChanged(connection.boundJid, oldStage, newStage)
         events.emit(ConnectionStageChangedEvent(connection.boundJid, oldStage, newStage))
+    }
+
+    private fun ensureNotShutdown() {
+        if (isShutdown) throw IllegalStateException("Takina 已 shutdown，不能继续执行该操作")
+    }
+
+    private fun sendRawWithInterceptors(connection: TakinaConnection, xml: String) {
+        val finalXml = applyOutboundFrameInterceptors(connection, xml) ?: return
+        connection.sendRaw(finalXml)
+    }
+
+    private fun applyOutboundFrameInterceptors(connection: TakinaConnection, xml: String): String? {
+        var current = xml
+        for (component in orderedComponents) {
+            val interceptor = component as? TakinaOutboundFrameInterceptor ?: continue
+            val result = runCatching { interceptor.interceptOutboundFrame(connection, current, this) }
+                .onFailure { error -> LogUtils.error(TAG, "出站拦截器异常", component::class.clzName, error.message ?: "未知错误") }
+                .getOrNull() ?: continue
+            if (result.action == TakinaFrameInterceptAction.DROP) {
+                LogUtils.warn(TAG, "出站帧被拦截器丢弃", connection.boundJid, component::class.clzName)
+                return null
+            }
+            current = result.xml
+        }
+        return current
+    }
+
+    private fun applyInboundFrameInterceptors(connection: TakinaConnection, xml: String): String? {
+        var current = xml
+        for (component in orderedComponents) {
+            val interceptor = component as? TakinaInboundFrameInterceptor ?: continue
+            val result = runCatching { interceptor.interceptInboundFrame(connection, current, this) }
+                .onFailure { error -> LogUtils.error(TAG, "入站帧拦截器异常", component::class.clzName, error.message ?: "未知错误") }
+                .getOrNull() ?: continue
+            if (result.action == TakinaFrameInterceptAction.DROP) {
+                LogUtils.warn(TAG, "入站帧被拦截器丢弃", connection.boundJid, component::class.clzName)
+                return null
+            }
+            current = result.xml
+        }
+        return current
+    }
+
+    private fun applyInboundStanzaInterceptors(connection: TakinaConnection, stanzaType: String, xml: String): Pair<String, String>? {
+        var currentType = stanzaType
+        var currentXml = xml
+        for (component in orderedComponents) {
+            val interceptor = component as? TakinaInboundStanzaInterceptor ?: continue
+            val result = runCatching { interceptor.interceptInboundStanza(connection, currentType, currentXml, this) }
+                .onFailure { error -> LogUtils.error(TAG, "入站 stanza 拦截器异常", component::class.clzName, error.message ?: "未知错误") }
+                .getOrNull() ?: continue
+            if (result.action == TakinaFrameInterceptAction.DROP) {
+                LogUtils.warn(TAG, "入站 stanza 被拦截器丢弃", connection.boundJid, component::class.clzName)
+                return null
+            }
+            currentType = result.stanzaType
+            currentXml = result.xml
+        }
+        return currentType to currentXml
+    }
+
+    private fun dispatchOutboundFrameSent(connection: TakinaConnection, xml: String) {
+        for (component in orderedComponents) {
+            val observer = component as? TakinaOutboundFrameObserver ?: continue
+            runCatching { observer.onOutboundFrameSent(connection, xml, this) }
+                .onFailure { error -> LogUtils.error(TAG, "出站发送后回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
+    }
+
+    private fun dispatchBeforeConnect(jid: BareJid) {
+        for (component in orderedComponents) {
+            val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
+            runCatching { lifecycle.onBeforeConnect(jid, this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件连接前回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
+    }
+
+    private fun dispatchAfterConnected(connection: TakinaConnection) {
+        for (component in orderedComponents) {
+            val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
+            runCatching { lifecycle.onAfterConnected(connection, this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件连接后回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
+    }
+
+    private fun dispatchAfterConnectFailed(jid: BareJid, reason: String) {
+        for (component in orderedComponents) {
+            val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
+            runCatching { lifecycle.onAfterConnectFailed(jid, reason, this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件连接失败回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
+    }
+
+    private fun dispatchBeforeDisconnect(jid: BareJid) {
+        for (component in orderedComponents) {
+            val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
+            runCatching { lifecycle.onBeforeDisconnect(jid, this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件断开前回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
+    }
+
+    private fun dispatchAfterDisconnected(jid: BareJid, reason: String?) {
+        for (component in orderedComponents) {
+            val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
+            runCatching { lifecycle.onAfterDisconnected(jid, reason, this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件断开后回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
+    }
+
+    private fun dispatchConnectionStageChanged(jid: BareJid, oldStage: ConnectionLifecycleStage, newStage: ConnectionLifecycleStage) {
+        for (component in orderedComponents) {
+            val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
+            runCatching { lifecycle.onConnectionStageChanged(jid, oldStage, newStage, this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件阶段变化回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
+    }
+
+    private fun shutdownInstalledComponents() {
+        for (component in orderedComponents) {
+            runCatching { component.onShutdown(this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件 shutdown 回调异常", component::class.clzName, error.message ?: "未知错误") }
+        }
     }
 
     private inner class AccountRuntime {
@@ -256,165 +406,6 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         }
 
         fun findConnection(jid: BareJid): TakinaConnection? = synchronized(lock) { accountConnections[jid] }
-    }
-
-    private inner class StreamManagementRuntime {
-        fun onInboundStanzaHandled(jid: BareJid) {
-            val sm = findComponent(StreamManagementComponent) ?: return
-            sm.onInboundStanzaHandled(sm.stateFor(jid))
-        }
-
-        fun onInboundFrame(connection: TakinaConnection, xml: String) {
-            val sm = findComponent(StreamManagementComponent) ?: return
-            val frame = sm.onInboundFrame(connection.boundJid, xml) ?: return
-            when (frame) {
-                is StreamManagementComponent.InboundFrame.Enabled -> {
-                    LogUtils.info(TAG, "Stream Management 已启用", connection.boundJid, "sessionId=${frame.id ?: "<none>"}", "resume=${frame.allowResume}")
-                    replayPendingAfterEnable(connection, sm)
-                }
-
-                is StreamManagementComponent.InboundFrame.Resumed -> {
-                    LogUtils.info(TAG, "Stream Management 已恢复", connection.boundJid, "acked=${frame.handledByServer}")
-                    replayUnackedAfterResume(connection, sm)
-                }
-
-                is StreamManagementComponent.InboundFrame.Acknowledged ->
-                    LogUtils.debug(TAG, "收到服务端确认", connection.boundJid, "acked=${frame.handledByServer}")
-
-                StreamManagementComponent.InboundFrame.AckRequest -> {
-                    val state = sm.stateFor(connection.boundJid)
-                    sm.sendAck(from = connection.boundJid, handledByClient = state.inboundHandledCount)
-                    LogUtils.debug(TAG, "收到服务端 Ack 请求并已响应", connection.boundJid, "h=${state.inboundHandledCount}")
-                }
-
-                is StreamManagementComponent.InboundFrame.Failed -> {
-                    LogUtils.warn(TAG, "Stream Management 失败", connection.boundJid, "acked=${frame.handledByServer ?: "<none>"}")
-                    sendEnable(sm, connection.boundJid)
-                }
-            }
-        }
-
-        fun onOutboundFrame(connection: TakinaConnection, xml: String) {
-            val root = org.atoriapps.takina.core.connections.XmppProtocol.rootName(xml)
-            if (root != "message" && root != "presence" && root != "iq") return
-            markOutboundAndMaybeAck(connection.boundJid, xml)
-        }
-
-        fun afterConnected(connection: TakinaConnection) {
-            val sm = findComponent(StreamManagementComponent) ?: return
-            val jid = connection.boundJid
-            if (!connection.supportsStreamManagement) return LogUtils.debug(TAG, "服务端未宣告 SM，跳过协商", jid)
-            val state = sm.stateFor(jid)
-            sm.resetReconnectAttempts(state)
-            val previousId = state.sessionId
-            val canResume = state.enabled && state.allowResume && !previousId.isNullOrBlank()
-            if (canResume) {
-                runCatching {
-                    sm.markResumeRequested(state, previousId)
-                    sm.sendResume(from = jid, previousId = previousId, handledByServer = state.lastServerAckCount)
-                    LogUtils.debug(TAG, "已发送 Stream Management resume", jid, "previd=$previousId", "h=${state.lastServerAckCount}")
-                }.onFailure { error ->
-                    LogUtils.warn(TAG, "发送 Stream Management resume 失败，回退 enable", jid, error.message ?: "未知错误")
-                    sendEnable(sm, jid)
-                }
-                return
-            }
-            sendEnable(sm, jid)
-        }
-
-        fun onConnectionClosed(jid: BareJid) = attemptAutoReconnect(jid)
-
-        fun clearState(jid: BareJid) {
-            val sm = findComponent(StreamManagementComponent) ?: return
-            sm.clearState(jid)
-        }
-
-        private fun markOutboundAndMaybeAck(jid: BareJid, xml: String) {
-            val sm = findComponent(StreamManagementComponent) ?: return
-            val state = sm.stateFor(jid)
-            sm.onOutboundStanzaSent(state, xml)
-            if (!sm.shouldSendAckRequest(state)) return
-            runCatching {
-                sm.sendAckRequest(from = jid)
-                sm.markAckRequestSent(state)
-                LogUtils.debug(TAG, "已发送服务端 Ack 请求", jid, "interval=${sm.autoAckRequestInterval}")
-            }.onFailure { error -> LogUtils.warn(TAG, "发送服务端 Ack 请求失败", jid, error.message ?: "未知错误") }
-        }
-
-        private fun sendEnable(sm: StreamManagementComponent, jid: BareJid) {
-            val state = sm.stateFor(jid)
-            runCatching {
-                sm.markEnableRequested(state)
-                sm.sendEnable(from = jid, allowResume = true)
-                LogUtils.debug(TAG, "已发送 Stream Management enable", jid)
-            }.onFailure { error -> LogUtils.warn(TAG, "发送 Stream Management enable 失败", jid, error.message ?: "未知错误") }
-        }
-
-        private fun replayPendingAfterEnable(connection: TakinaConnection, sm: StreamManagementComponent) {
-            val state = sm.stateFor(connection.boundJid)
-            val replay = sm.consumePendingReplayAfterEnable(state)
-            if (replay.isEmpty()) return
-            var sentCount = 0
-            runCatching {
-                replay.forEachIndexed { index, xml ->
-                    connection.sendRaw(xml)
-                    sentCount = index + 1
-                }
-                LogUtils.info(TAG, "SM 新会话重放完成", connection.boundJid, "count=${replay.size}")
-            }.onFailure { error ->
-                val unsent = replay.drop(sentCount)
-                sm.prependPendingReplayAfterEnable(state, unsent)
-                LogUtils.warn(TAG, "SM 新会话重放中断", connection.boundJid, "已发送=$sentCount", "剩余=${unsent.size}", error.message ?: "未知错误")
-            }
-        }
-
-        private fun replayUnackedAfterResume(connection: TakinaConnection, sm: StreamManagementComponent) {
-            val state = sm.stateFor(connection.boundJid)
-            val replay = sm.snapshotUnackedForResume(state)
-            if (replay.isEmpty()) return
-            sm.scheduleResumeReplay(state, replay)
-            runCatching {
-                replay.forEach { xml -> connection.sendRaw(xml) }
-                LogUtils.info(TAG, "SM 会话恢复后重放完成", connection.boundJid, "count=${replay.size}")
-            }.onFailure { error -> LogUtils.warn(TAG, "SM 会话恢复后重放失败", connection.boundJid, error.message ?: "未知错误") }
-        }
-
-        private fun attemptAutoReconnect(jid: BareJid) {
-            val sm = findComponent(StreamManagementComponent) ?: return
-            if (!sm.autoReconnectOnConnectionDropped) return
-            val state = sm.stateFor(jid)
-
-            while (sm.shouldAutoReconnect(state)) {
-                val attempt = sm.markReconnectAttempt(state)
-                LogUtils.info(TAG, "SM 自动重连开始", jid, "attempt=$attempt")
-                val result = runCatching { connectInternal(jid) }
-                if (result.isSuccess) return LogUtils.info(TAG, "SM 自动重连成功", jid, "attempt=$attempt")
-                LogUtils.warn(TAG, "SM 自动重连失败", jid, "attempt=$attempt", result.exceptionOrNull()?.message ?: "未知错误")
-                if (sm.autoReconnectDelayMillis > 0 && sm.shouldAutoReconnect(state)) runCatching { Thread.sleep(sm.autoReconnectDelayMillis.toLong()) }
-            }
-            
-            LogUtils.warn(TAG, "SM 自动重连次数已达上限", jid, "max=${sm.autoReconnectMaxAttempts}")
-        }
-    }
-
-    private inner class OptionalFeaturesRuntime {
-        fun afterConnected(connection: TakinaConnection) {
-            val carbons = findComponent(CarbonsComponent) ?: return
-            if (!carbons.autoEnableOnConnect) return
-            runCatching {
-                carbons.enable(from = connection.boundJid).send()
-                LogUtils.debug(TAG, "已发送 Message Carbons enable", connection.boundJid)
-            }.onFailure { error -> LogUtils.warn(TAG, "发送 Message Carbons enable 失败", connection.boundJid, error.message ?: "未知错误") }
-        }
-
-        fun onInboundMessage(connection: TakinaConnection, inboundXml: String) {
-            val receipts = findComponent(MessageReceiptsComponent) ?: return
-            val replyStanza = receipts.buildAutoReply(selfJid = connection.boundJid, inboundMessageXml = inboundXml) ?: return
-            runCatching {
-                sendStanza(connection.boundJid, replyStanza)
-                LogUtils.debug(TAG, "已自动发送消息回执", connection.boundJid, "id=${receipts.parseEnvelope(inboundXml)?.messageId ?: "<unknown>"}")
-            }.onFailure { error -> LogUtils.warn(TAG, "自动发送消息回执失败", connection.boundJid, error.message ?: "未知错误") }
-        }
     }
 }
 
@@ -438,11 +429,9 @@ interface TakinaContext {
         requireComponent(provider.getComponentType())
 }
 
-inline fun <reified COMPONENT : TakinaComponent> TakinaContext.findComponent(): COMPONENT? =
-    findComponent(COMPONENT::class)
+inline fun <reified COMPONENT : TakinaComponent> TakinaContext.findComponent(): COMPONENT? = findComponent(COMPONENT::class)
 
-inline fun <reified COMPONENT : TakinaComponent> TakinaContext.requireComponent(): COMPONENT =
-    requireComponent(COMPONENT::class)
+inline fun <reified COMPONENT : TakinaComponent> TakinaContext.requireComponent(): COMPONENT = requireComponent(COMPONENT::class)
 
 @DslMarker
 annotation class TakinaConfigDsl

@@ -2,12 +2,16 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.CapabilitiesComponent
 import org.atoriapps.takina.core.components.CarbonsComponent
+import org.atoriapps.takina.core.components.DiscoveryComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.capabilities
 import org.atoriapps.takina.core.components.carbons
+import org.atoriapps.takina.core.components.discovery
 import org.atoriapps.takina.core.components.receipts
 import org.atoriapps.takina.core.components.streamManagement
+import org.atoriapps.takina.core.connections.ConnectionConfig
+import org.atoriapps.takina.core.connections.TakinaConnection
 import org.atoriapps.takina.core.xmpp.toBareJid
 import org.atoriapps.takina.core.xmpp.stanzas.PresenceStanza
 import kotlin.test.Test
@@ -52,6 +56,63 @@ class ComponentsProtocolTest {
         assertEquals("https://takina.im", parsed.node)
         assertEquals("caps-v1", parsed.ver)
         assertEquals("sha-1", parsed.hash)
+    }
+
+    @Test
+    fun capabilitiesComponent_shouldAutoAppendAndCacheWhenEnabled() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(CapabilitiesComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val caps = takina.capabilities
+        caps.autoAppendToOutboundPresence = true
+        caps.defaultOutboundCapabilities = caps.build(node = "https://takina.im", ver = "caps-auto")
+        val connection = TakinaConnection(config = ConnectionConfig(jid = jid), passwordProvider = { "password" })
+
+        val outbound = "<presence from='alice@example.com/takina'/>"
+        val outboundAfterIntercept = caps.interceptOutboundFrame(connection, outbound, takina).xml
+        assertTrue(outboundAfterIntercept.contains("<c xmlns='http://jabber.org/protocol/caps'"))
+        assertTrue(outboundAfterIntercept.contains("node='https://takina.im'"))
+        assertTrue(outboundAfterIntercept.contains("ver='caps-auto'"))
+
+        val inbound = "<presence from='bob@example.com/mobile'><c xmlns='http://jabber.org/protocol/caps' hash='sha-1' node='https://bob.im/caps' ver='v2'/></presence>"
+        caps.interceptInboundStanza(connection, "presence", inbound, takina)
+        val cached = caps.cachedInboundCapabilities("bob@example.com".toBareJid())
+        assertNotNull(cached)
+        assertEquals("https://bob.im/caps", cached.node)
+        assertEquals("v2", cached.ver)
+    }
+
+    @Test
+    fun discoveryComponent_shouldCaptureInboundIqResults() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(DiscoveryComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val discovery = takina.discovery
+        val connection = TakinaConnection(config = ConnectionConfig(jid = jid), passwordProvider = { "password" })
+        val discoInfoResult = "<iq from='example.com' to='alice@example.com/takina' type='result' id='disco-1'><query xmlns='http://jabber.org/protocol/disco#info'><feature var='urn:xmpp:sm:3'/></query></iq>"
+        val softwareVersionResult = "<iq from='example.com' to='alice@example.com/takina' type='result' id='version-1'><query xmlns='jabber:iq:version'><name>Takina Server</name><version>1.0.0</version></query></iq>"
+        discovery.interceptInboundStanza(connection, "iq", discoInfoResult, takina)
+        discovery.interceptInboundStanza(connection, "iq", softwareVersionResult, takina)
+
+        val discoCaptured = discovery.latestDiscoInfoResult("example.com".toBareJid())
+        val versionCaptured = discovery.latestSoftwareVersionResult("example.com".toBareJid())
+        assertNotNull(discoCaptured)
+        assertNotNull(versionCaptured)
+        assertEquals("disco-1", discoCaptured.id)
+        assertEquals("version-1", versionCaptured.id)
+        assertEquals(2, discovery.capturedResultsSnapshot().size)
     }
 
     @Test

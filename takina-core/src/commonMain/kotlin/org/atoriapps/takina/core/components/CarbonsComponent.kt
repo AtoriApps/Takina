@@ -4,6 +4,7 @@ import org.atoriapps.takina.core.AbstractTakina
 import org.atoriapps.takina.core.TakinaContext
 import org.atoriapps.takina.core.requests.PendingIqAwaitRequest
 import org.atoriapps.takina.core.requests.PendingStanzaRequest
+import org.atoriapps.takina.core.connections.TakinaConnection
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlRegexUtils
@@ -12,11 +13,14 @@ import org.atoriapps.takina.core.xmpp.toJid
 import org.atoriapps.takina.core.xmpp.stanzas.IqStanza
 import org.atoriapps.takina.core.xmpp.stanzas.IqType
 import org.atoriapps.takina.core.utils.IdUtils
+import org.atoriapps.takina.core.utils.LogUtils
 
 class CarbonsComponent internal constructor(
     private val takina: AbstractTakina,
-) : TakinaComponent {
+) : TakinaConnectionLifecycleComponent {
     companion object : TakinaComponentProvider<CarbonsComponent> {
+        private const val TAG = "CarbonsComponent"
+
         const val NAMESPACE: String = "urn:xmpp:carbons:2"
         const val FORWARDED_NAMESPACE: String = "urn:xmpp:forward:0"
 
@@ -30,6 +34,16 @@ class CarbonsComponent internal constructor(
     }
 
     var autoEnableOnConnect: Boolean = true
+
+    override fun onAfterConnected(connection: TakinaConnection, context: TakinaContext) {
+        if (!autoEnableOnConnect) return
+        runCatching {
+            enable(from = connection.boundJid).send()
+            LogUtils.debug(TAG, "已发送 Message Carbons enable", connection.boundJid)
+        }.onFailure { error ->
+            LogUtils.warn(TAG, "连接后自动启用 Carbons 失败", connection.boundJid, error.message ?: "未知错误")
+        }
+    }
 
     fun enable(
         from: Jid? = null,

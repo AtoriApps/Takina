@@ -2,6 +2,8 @@ package org.atoriapps.takina.core.components
 
 import org.atoriapps.takina.core.AbstractTakina
 import org.atoriapps.takina.core.TakinaContext
+import org.atoriapps.takina.core.connections.TakinaConnection
+import org.atoriapps.takina.core.utils.LogUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlRegexUtils
@@ -10,7 +12,7 @@ import org.atoriapps.takina.core.xmpp.toJid
 import org.atoriapps.takina.core.xmpp.stanzas.MessageStanza
 import org.atoriapps.takina.core.xmpp.stanzas.MessageType
 
-class MessageReceiptsComponent internal constructor(private val takina: AbstractTakina) : TakinaComponent {
+class MessageReceiptsComponent internal constructor(private val takina: AbstractTakina) : TakinaInboundStanzaInterceptor {
     companion object : TakinaComponentProvider<MessageReceiptsComponent> {
         const val NAMESPACE: String = "urn:xmpp:receipts"
 
@@ -24,6 +26,20 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
     }
 
     var autoReplyEnabled: Boolean = true
+
+    override fun interceptInboundStanza(
+        connection: TakinaConnection,
+        stanzaType: String,
+        xml: String,
+        context: TakinaContext,
+    ): TakinaInboundStanzaInterceptResult {
+        if (stanzaType != "message" || !autoReplyEnabled) return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
+        val replyStanza = buildReceivedReply(selfJid = connection.boundJid, inboundMessageXml = xml)
+            ?: return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
+        runCatching { takina.sendStanza(connection.boundJid, replyStanza) }
+            .onFailure { error -> LogUtils.warn("MessageReceiptsComponent", "自动发送消息回执失败", connection.boundJid, error.message ?: "未知错误") }
+        return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
+    }
 
     fun requestElement(): XmlElement = XmlElement(
         name = "request",
@@ -47,9 +63,7 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
         extensions = stanza.extensions + receivedElement(messageId),
     )
 
-    fun parseFromMessageXml(xml: String): ReceiptFrame? {
-        return parseEnvelope(xml)?.frame
-    }
+    fun parseFromMessageXml(xml: String): ReceiptFrame? = parseEnvelope(xml)?.frame
 
     fun parseEnvelope(xml: String): ParsedReceiptEnvelope? {
         val parsedRoot = runCatching { XmlParser.parseRoot(xml) }.getOrNull() ?: return null
@@ -71,6 +85,7 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
             }
             null
         }
+
         if (received != null) return received
 
         val request = REQUEST_TAG_REGEX.find(xml)?.let { match ->
@@ -84,6 +99,7 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
                 type = parsedRoot.attributes["type"],
             ) else null
         }
+
         return request
     }
 

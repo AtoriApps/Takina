@@ -1,9 +1,15 @@
 package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.ConnectionDiscoveryComponent
 import org.atoriapps.takina.core.components.CapabilitiesComponent
 import org.atoriapps.takina.core.components.CarbonsComponent
+import org.atoriapps.takina.core.components.CsiPushComponent
+import org.atoriapps.takina.core.components.HttpUploadComponent
+import org.atoriapps.takina.core.components.MamComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
+import org.atoriapps.takina.core.components.MucComponent
+import org.atoriapps.takina.core.components.RosterComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.TakinaComponent
 import org.atoriapps.takina.core.components.TakinaComponentProvider
@@ -57,8 +63,14 @@ class TakinaConfiguration {
     internal fun registerOptionalComponents() {
         registerComponent(CapabilitiesComponent)
         registerComponent(CarbonsComponent)
+        registerComponent(ConnectionDiscoveryComponent)
+        registerComponent(CsiPushComponent)
         registerComponent(DiscoveryComponent)
+        registerComponent(HttpUploadComponent)
+        registerComponent(MamComponent)
         registerComponent(MessageReceiptsComponent)
+        registerComponent(MucComponent)
+        registerComponent(RosterComponent)
         registerComponent(StreamManagementComponent)
     }
 

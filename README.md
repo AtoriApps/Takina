@@ -43,13 +43,19 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 
 当前 `createTakina(registerAllComponents = ...)` 已预留“核心 + 可选组件”加载模型。后续新增协议能力时，默认应优先落在可选组件中；只有跨组件共享的底座逻辑才进入核心能力层。
 
-当前内置可选组件（截至 2026-02-19）：
+当前内置可选组件（截至 2026-02-20）：
 
 * `DiscoveryComponent`：XEP-0030（disco#info）与基础软件版本请求封装。
 * `CapabilitiesComponent`：XEP-0115 caps 节点构造与 presence 载荷解析。
 * `CarbonsComponent`：XEP-0280 Carbons 启用/关闭与转发消息解析。
 * `MessageReceiptsComponent`：XEP-0184 回执请求/回执确认载荷构造、消息解析与自动回执策略。
 * `StreamManagementComponent`：XEP-0198 基础模型（enable/resume/a/r 构造、帧解析、计数状态跟踪、自动确认请求与重连恢复基础流程）。
+* `RosterComponent`：RFC 6121 roster 拉取/增删改与订阅流程（subscribe/subscribed/unsubscribe/unsubscribed）封装。
+* `MamComponent`：XEP-0313 + XEP-0059 查询构造、分页参数、MAM result/fin 与 stanza-id 解析。
+* `MucComponent`：XEP-0045 进房/离房/群消息，XEP-0249 直接邀请，XEP-0402 Bookmarks 2 请求封装。
+* `CsiPushComponent`：XEP-0352 active/inactive + XEP-0357 push enable/disable 与能力发现解析。
+* `HttpUploadComponent`：XEP-0363 slot 申请与 put/get URL 解析。
+* `ConnectionDiscoveryComponent`：XEP-0156 host-meta 备用连接解析 + 直连 TLS/WebSocket/BOSH 特性检测。
 
 ## 功能特性
 
@@ -102,8 +108,9 @@ takina.events.on(AllConnectedEvent) {
 }
 
 takina.connect(demoUserJid)
+
 takina.request.message {
-  from = demoUserJid
+  from = demoUserJid // 多连接时则必须指定 from
   to = "bob@example.com".toBareJid()
   body = "hello from takina"
 }.send()
@@ -190,6 +197,22 @@ createTakina(registerAllComponents = false) {
     autoAckRequestInterval = 10
   }
 }
+```
+
+### P0 冒烟测试（JVM）
+
+`takina-examples` 下的 `SmokeClientExample` 已支持按环境变量启用分项测试：
+
+* `TAKINA_SMOKE_ROSTER=1`：执行 roster get。
+* `TAKINA_SMOKE_MAM=1`：执行 MAM 查询（pageMax=1）。
+* `TAKINA_SMOKE_PUSH=1` + `TAKINA_SMOKE_PUSH_SERVICE`：执行 push enable/disable（可选 `TAKINA_SMOKE_PUSH_NODE`）。
+* `TAKINA_SMOKE_UPLOAD=1` + `TAKINA_SMOKE_UPLOAD_SERVICE`：执行 HTTP Upload slot 申请（可选 `TAKINA_SMOKE_UPLOAD_FILE`、`TAKINA_SMOKE_UPLOAD_SIZE`）。
+* `TAKINA_SMOKE_ALT_LINKS_XML` / `TAKINA_SMOKE_ALT_LINKS_JSON`：离线验证 XEP-0156 解析逻辑。
+
+运行示例：
+
+```bash
+./gradlew :takina-examples:runSmokeClientExample
 ```
 
 ### 协作式跨进程恢复（由使用方提供存储）

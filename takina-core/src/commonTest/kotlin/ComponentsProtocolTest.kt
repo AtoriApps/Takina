@@ -2,13 +2,25 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.CapabilitiesComponent
 import org.atoriapps.takina.core.components.CarbonsComponent
+import org.atoriapps.takina.core.components.ConnectionDiscoveryComponent
+import org.atoriapps.takina.core.components.CsiPushComponent
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.HttpUploadComponent
+import org.atoriapps.takina.core.components.MamComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
+import org.atoriapps.takina.core.components.MucComponent
+import org.atoriapps.takina.core.components.RosterComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.capabilities
 import org.atoriapps.takina.core.components.carbons
+import org.atoriapps.takina.core.components.connectionDiscovery
+import org.atoriapps.takina.core.components.csiPush
 import org.atoriapps.takina.core.components.discovery
+import org.atoriapps.takina.core.components.httpUpload
+import org.atoriapps.takina.core.components.mam
+import org.atoriapps.takina.core.components.muc
 import org.atoriapps.takina.core.components.receipts
+import org.atoriapps.takina.core.components.roster
 import org.atoriapps.takina.core.components.streamManagement
 import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.TakinaConnection
@@ -388,6 +400,217 @@ class ComponentsProtocolTest {
         assertEquals(CarbonsComponent.CarbonFrame.Received, parsed.frame)
         assertTrue(parsed.forwardedMessageXml.contains("id='msg-1'"))
         assertTrue(parsed.forwardedMessageXml.contains("<body>hello from phone</body>"))
+    }
+
+    @Test
+    fun rosterComponent_shouldBuildRosterAndSubscriptionRequests() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(RosterComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val roster = takina.roster
+        val getXml = roster.rosterGet(from = jid, version = "ver-1").toXml()
+        assertTrue(getXml.contains("jabber:iq:roster"))
+        assertTrue(getXml.contains("ver='ver-1'"))
+
+        val setXml = roster.rosterSetItem(jid = "bob@example.com".toBareJid(), name = "Bob", from = jid).toXml()
+        assertTrue(setXml.contains("type='set'"))
+        assertTrue(setXml.contains("jid='bob@example.com'"))
+        assertTrue(setXml.contains("name='Bob'"))
+
+        val subscribeXml = roster.requestSubscription(to = "bob@example.com".toBareJid(), from = jid).toXml()
+        assertTrue(subscribeXml.contains("type='subscribe'"))
+
+        val rosterResult = roster.parseRosterResult("<iq type='result' id='r1'><query xmlns='jabber:iq:roster' ver='v2'><item jid='bob@example.com' name='Bob' subscription='both'/></query></iq>")
+        assertNotNull(rosterResult)
+        assertEquals("v2", rosterResult.version)
+        assertEquals(1, rosterResult.items.size)
+        assertEquals("both", rosterResult.items.first().subscription)
+
+        val subEvent = roster.parseSubscriptionEvent("<presence from='bob@example.com/phone' to='alice@example.com/takina' type='subscribe'/>")
+        assertNotNull(subEvent)
+        assertEquals(RosterComponent.SubscriptionAction.REQUEST, subEvent.action)
+    }
+
+    @Test
+    fun mamComponent_shouldBuildQueryAndParseResult() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(MamComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val mam = takina.mam
+        val queryXml = mam.queryArchiveAwait(
+            from = jid,
+            with = "bob@example.com".toBareJid(),
+            pageAfter = "cursor-1",
+            pageMax = 20,
+        ).toXml()
+        assertTrue(queryXml.contains("urn:xmpp:mam:2"))
+        assertTrue(queryXml.contains("http://jabber.org/protocol/rsm"))
+        assertTrue(queryXml.contains("<after>cursor-1</after>"))
+
+        val message = """
+            <message from='example.com' to='alice@example.com/takina'>
+              <result xmlns='urn:xmpp:mam:2' queryid='q1' id='m1'>
+                <forwarded xmlns='urn:xmpp:forward:0'>
+                  <delay xmlns='urn:xmpp:delay' stamp='2026-02-20T00:00:00Z'/>
+                  <message from='bob@example.com' to='alice@example.com' type='chat' id='msg-1'>
+                    <body>hello</body>
+                    <stanza-id xmlns='urn:xmpp:sid:0' by='example.com' id='sid-1'/>
+                  </message>
+                </forwarded>
+              </result>
+            </message>
+        """.trimIndent()
+        val envelope = mam.parseResultEnvelope(message)
+        assertNotNull(envelope)
+        assertEquals("q1", envelope.queryId)
+        assertEquals("m1", envelope.resultId)
+        assertEquals("sid-1", envelope.stanzaIds.first().id)
+
+        val fin = mam.parseFin("<iq type='result' id='mam-fin'><fin xmlns='urn:xmpp:mam:2' complete='true' stable='true' queryid='q1'><set xmlns='http://jabber.org/protocol/rsm'><first>f1</first><last>l1</last><count>25</count></set></fin></iq>")
+        assertNotNull(fin)
+        assertTrue(fin.complete)
+        assertEquals(25, fin.rsm?.count)
+    }
+
+    @Test
+    fun mucComponent_shouldBuildJoinInviteAndBookmarks() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(MucComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val muc = takina.muc
+        val joinXml = muc.joinRoom(roomJid = "room@conference.example.com".toBareJid(), nick = "alice", from = jid, historyMaxStanzas = 10).toXml()
+        assertTrue(joinXml.contains("http://jabber.org/protocol/muc"))
+        assertTrue(joinXml.contains("maxstanzas='10'"))
+
+        val inviteXml = muc.directInvite(
+            invitee = "bob@example.com".toBareJid(),
+            roomJid = "room@conference.example.com".toBareJid(),
+            from = jid,
+            reason = "快来",
+            continueThread = true,
+        ).toXml()
+        assertTrue(inviteXml.contains("jabber:x:conference"))
+        assertTrue(inviteXml.contains("continue='true'"))
+
+        val parsedInvite = muc.parseDirectInvite(inviteXml)
+        assertNotNull(parsedInvite)
+        assertEquals("room@conference.example.com", parsedInvite.roomJid)
+
+        val bookmarksXml = muc.publishBookmarks2Await(
+            bookmarks = listOf(MucComponent.BookmarkRoom(jid = "room@conference.example.com".toBareJid(), name = "工作群", autoJoin = true, nick = "alice")),
+            from = jid,
+        ).toXml()
+        assertTrue(bookmarksXml.contains("urn:xmpp:bookmarks:1"))
+        assertTrue(bookmarksXml.contains("<item id='room@conference.example.com'>"))
+        assertFalse(bookmarksXml.contains("conference jid='"))
+
+        val parsedBookmarks = muc.parseBookmarks2Result("<iq type='result'><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='urn:xmpp:bookmarks:1'><item id='room@conference.example.com'><conference xmlns='urn:xmpp:bookmarks:1' name='工作群' autojoin='true'/></item></items></pubsub></iq>")
+        assertEquals(1, parsedBookmarks.size)
+        assertEquals("room@conference.example.com", parsedBookmarks.first().jid.toString())
+    }
+
+    @Test
+    fun csiPushComponent_shouldBuildCsiAndPushPayload() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(CsiPushComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val csiPush = takina.csiPush
+        assertEquals("<active xmlns='urn:xmpp:csi:0'/>", csiPush.activeElement().toXmlString())
+        assertEquals("<inactive xmlns='urn:xmpp:csi:0'/>", csiPush.inactiveElement().toXmlString())
+
+        val enableXml = csiPush.enablePushAwait(pushServiceJid = "push.example.com".toBareJid(), node = "app-node", secret = "sec", from = jid).toXml()
+        assertTrue(enableXml.contains("urn:xmpp:push:0"))
+        assertTrue(enableXml.contains("node='app-node'"))
+        assertTrue(enableXml.contains("secret"))
+        val disableWithoutNodeXml = csiPush.disablePushAwait(pushServiceJid = "push.example.com".toBareJid(), from = jid).toXml()
+        assertTrue(disableWithoutNodeXml.contains("<disable"))
+        assertFalse(disableWithoutNodeXml.contains(" node='"))
+
+        val disco = csiPush.parseDiscoFeatures("<iq type='result'><query xmlns='http://jabber.org/protocol/disco#info'><feature var='urn:xmpp:csi:0'/><feature var='urn:xmpp:push:0'/></query></iq>")
+        assertTrue(disco.supportsCsi)
+        assertTrue(disco.supportsPush)
+    }
+
+    @Test
+    fun httpUploadComponent_shouldBuildRequestAndParseSlot() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(HttpUploadComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val upload = takina.httpUpload
+        val requestXml = upload.requestSlotAwait(
+            filename = "photo.jpg",
+            size = 1024,
+            contentType = "image/jpeg",
+            from = jid,
+            to = "upload.example.com".toBareJid(),
+        ).toXml()
+        assertTrue(requestXml.contains("urn:xmpp:http:upload:0"))
+        assertTrue(requestXml.contains("filename='photo.jpg'"))
+
+        val slot = upload.parseSlotResult("<iq type='result' id='slot-1'><slot xmlns='urn:xmpp:http:upload:0'><put url='https://upload.example.com/put'><header name='Authorization'>Bearer token</header><header name='X-Unsafe'>drop-me</header></put><get url='https://upload.example.com/get'/></slot></iq>")
+        assertNotNull(slot)
+        assertEquals("https://upload.example.com/put", slot.putUrl)
+        assertEquals("https://upload.example.com/get", slot.getUrl)
+        assertEquals("Bearer token", slot.putHeaders["Authorization"])
+        assertEquals(1, slot.putHeadersOrdered.size)
+    }
+
+    @Test
+    fun connectionDiscoveryComponent_shouldParseDiscoAndHostMeta() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(ConnectionDiscoveryComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val discovery = takina.connectionDiscovery
+        val result = discovery.parseDiscoFeatures(
+            "<iq type='result'><query xmlns='http://jabber.org/protocol/disco#info'><feature var='urn:xmpp:features:tls'/><feature var='urn:xmpp:alt-connections:websocket'/></query></iq>",
+        )
+        assertTrue(result.supportsDirectTls)
+        assertTrue(result.supportsWebSocket)
+        assertFalse(result.supportsBosh)
+
+        val endpoints = discovery.parseHostMetaLinks(
+            "<XRD xmlns='http://docs.oasis-open.org/ns/xri/xrd-1.0'><Link rel='urn:xmpp:alt-connections:websocket' href='wss://xmpp.example.com/ws'/><Link rel='urn:xmpp:alt-connections:websocket' href='ws://xmpp.example.com/ws'/><Link rel='urn:xmpp:alt-connections:xbosh' href='https://xmpp.example.com/http-bind'/></XRD>",
+        )
+        assertEquals(2, endpoints.size)
+
+        val jsonEndpoints = discovery.parseHostMetaJsonLinks("""{"links":[{"rel":"urn:xmpp:alt-connections:websocket","href":"wss://xmpp.example.com/ws"},{"rel":"urn:xmpp:alt-connections:xbosh","href":"http://xmpp.example.com/http-bind"}]}""")
+        assertEquals(1, jsonEndpoints.size)
     }
 
     private class InMemorySmStore : StreamManagementComponent.StreamManagementStateStore {

@@ -1,6 +1,6 @@
 # Takina 协议实现状态
 
-实现了记得更新！最后更新：2026-02-19
+实现了记得更新！最后更新：2026-02-20
 
 > 本文档用于统一维护 Takina 的 RFC/XEP 实现进度与待办优先级。
 
@@ -38,28 +38,59 @@
   * `StreamManagementComponent`：enable/resume/a/r、计数状态、自动 ack request、重连恢复与未确认重放基础流程
 * [XEP-0280 Message Carbons](https://xmpp.org/extensions/xep-0280.html)：`部分实现`
   * `CarbonsComponent`：enable/disable、await result、转发消息封装解析、连接后自动 enable
+* [XEP-0313 Message Archive Management](https://xmpp.org/extensions/xep-0313.html)：`部分实现`
+  * `MamComponent`：MAM 查询、RSM 分页参数、result/fin 解析
+* [XEP-0059 Result Set Management](https://xmpp.org/extensions/xep-0059.html)：`部分实现`
+  * `MamComponent`：分页参数构造（after/before/max）与 first/last/count 解析
+* [XEP-0297 Stanza Forwarding](https://xmpp.org/extensions/xep-0297.html)：`部分实现`
+  * `MamComponent`：forwarded 消息包裹解析
+* [XEP-0359 Unique and Stable Stanza IDs](https://xmpp.org/extensions/xep-0359.html)：`部分实现`
+  * `MamComponent`：stanza-id 提取与关联
+* [XEP-0045 Multi-User Chat](https://xmpp.org/extensions/xep-0045.html)：`部分实现`
+  * `MucComponent`：进房/离房/群消息/历史请求参数
+* [XEP-0249 Direct MUC Invitations](https://xmpp.org/extensions/xep-0249.html)：`部分实现`
+  * `MucComponent`：直接邀请构造与解析
+* [XEP-0402 PEP Native Bookmarks](https://xmpp.org/extensions/xep-0402.html)：`部分实现`
+  * `MucComponent`：书签读取/发布请求封装（按 item id=room jid 最小语义）
+* [XEP-0352 Client State Indication](https://xmpp.org/extensions/xep-0352.html)：`部分实现`
+  * `CsiPushComponent`：active/inactive 帧构造与发送
+* [XEP-0357 Push Notifications](https://xmpp.org/extensions/xep-0357.html)：`部分实现`
+  * `CsiPushComponent`：push enable/disable + disco feature 解析（disable 支持无 node 关闭）
+* [XEP-0363 HTTP File Upload](https://xmpp.org/extensions/xep-0363.html)：`部分实现`
+  * `HttpUploadComponent`：slot 申请与 put/get URL 解析（header 仅接收 Authorization/Cookie/Expires）
+* [XEP-0156 Discovering Alternative XMPP Connection Methods](https://xmpp.org/extensions/xep-0156.html)：`部分实现`
+  * `ConnectionDiscoveryComponent`：host-meta XML/JSON Link 解析（仅接收 wss/https 端点）
+* [RFC 7395 An Extensible Messaging and Presence Protocol (XMPP) Subprotocol for WebSocket](https://www.rfc-editor.org/rfc/rfc7395)：`部分实现`
+  * `ConnectionDiscoveryComponent`：WebSocket 能力与备用连接入口解析
+* [XEP-0368 SRV records for XMPP over TLS](https://xmpp.org/extensions/xep-0368.html)：`部分实现`
+  * `ConnectionDiscoveryComponent`：直连 TLS 能力识别（disco feature 维度）
 
 ## 未实现（待办）优先级清单
 
 ### P0（优先实现）
 
 1. `RFC 6121：roster/订阅语义补齐`
-   * 完整实现 roster 拉取/变更/版本语义、presence 订阅授权流程
+   * 当前进度：`部分实现`（`RosterComponent` 已提供 roster 拉取/变更、subscription 基础流程与解析）
+   * 待补齐：完整 roster version 协商与服务端 push 一致性边界
    * 注：`XEP-0237` 已过时，优先按 RFC 6121 语义实现
 2. `XEP-0198（流管理）：严格化`
-   * 完整覆盖失败边界、计数一致性、恢复时序与异常重放策略
+   * 当前进度：`部分实现`（已有 enable/resume/a/r、状态持久化、未确认重放与自动重连）
+   * 待补齐：更严格的失败分支覆盖与复杂网络异常回放策略
 3. `XEP-0313（MAM）+XEP-0059（RSM）+XEP-0297（转发的）+XEP-0359`
-   * MAM 查询、分页、结果聚合、stanza-id 关联
+   * 当前进度：`部分实现`（`MamComponent` 已支持查询构造、分页参数、result/fin 与 stanza-id 解析）
+   * 待补齐：结果聚合器、更多过滤条件、跨页游标策略
 4. `XEP-0045+XEP-0249+XEP-0402`
-   * MUC 最小闭环（进房/离房/群消息/历史）
-   * 直接邀请与新书签规范（Bookmarks 2）
+   * 当前进度：`部分实现`（`MucComponent` 已支持进房/离房/群消息/历史参数、直接邀请、Bookmarks 2 请求）
+   * 待补齐：房间成员状态语义、错误码分支、书签同步细节
 5. `XEP-0352（CSI）+XEP-0357（Push）`
-   * CSI active/inactive 生命周期
-   * Push enable/disable 与发现流程
+   * 当前进度：`部分实现`（`CsiPushComponent` 已支持 active/inactive 与 push enable/disable + disco 解析）
+   * 待补齐：生命周期自动切换策略与 push publish-options 全量语义
 6. `XEP-0363（Gultsch发的XEP）`
-   * HTTP 文件上传（slot 申请、限制处理、错误恢复）
+   * 当前进度：`部分实现`（`HttpUploadComponent` 已支持 slot 申请与响应解析）
+   * 待补齐：上传限制处理、失败重试与错误恢复策略
 7. `RFC 7590+XEP-0368（直连 TLS）+RFC 7395（WebSocket）+XEP-0156`
-   * 传输层现代化：TLS 最佳实践、直连 TLS、WebSocket、备用连接发现
+   * 当前进度：`部分实现`（`ConnectionDiscoveryComponent` 已支持发现信息解析）
+   * 待补齐：自动连接策略编排、直连 TLS 握手策略与 WebSocket 传输实现闭环
 
 ### P1（高优先）
 

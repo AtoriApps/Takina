@@ -2,8 +2,14 @@ package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.components.CapabilitiesComponent
 import org.atoriapps.takina.core.components.CarbonsComponent
+import org.atoriapps.takina.core.components.ConnectionDiscoveryComponent
+import org.atoriapps.takina.core.components.CsiPushComponent
 import org.atoriapps.takina.core.components.DiscoveryComponent
+import org.atoriapps.takina.core.components.HttpUploadComponent
+import org.atoriapps.takina.core.components.MamComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
+import org.atoriapps.takina.core.components.MucComponent
+import org.atoriapps.takina.core.components.RosterComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.discovery
 import org.atoriapps.takina.core.connections.ConnectionConfig
@@ -187,5 +193,11 @@ class CommonInitTest {
         assertNotNull(takina.findComponent(DiscoveryComponent))
         assertNotNull(takina.findComponent(MessageReceiptsComponent))
         assertNotNull(takina.findComponent(StreamManagementComponent))
+        assertNotNull(takina.findComponent(RosterComponent))
+        assertNotNull(takina.findComponent(MamComponent))
+        assertNotNull(takina.findComponent(MucComponent))
+        assertNotNull(takina.findComponent(CsiPushComponent))
+        assertNotNull(takina.findComponent(HttpUploadComponent))
+        assertNotNull(takina.findComponent(ConnectionDiscoveryComponent))
     }
 }

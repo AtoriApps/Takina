@@ -156,7 +156,7 @@ class CommonInitTest {
 
         assertNull(takina.findComponent(DiscoveryComponent))
         assertFailsWith<IllegalStateException> {
-            takina.discovery()
+            takina.discovery
         }
     }
 

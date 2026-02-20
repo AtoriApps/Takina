@@ -25,6 +25,7 @@ class StreamManagementComponent internal constructor(
 
     var autoReconnectOnConnectionDropped: Boolean = true
     var autoReconnectMaxAttempts: Int = 3
+    var autoReconnectDelayMillis: Int = 1_000
     var autoAckRequestInterval: Int = 10
     var persistStateToStore: Boolean = false
     var restorePersistedStateOnStartup: Boolean = false
@@ -466,7 +467,7 @@ class StreamManagementComponent internal constructor(
     }
 }
 
-fun TakinaContext.streamManagement(): StreamManagementComponent = requireComponent(StreamManagementComponent)
+val TakinaContext.streamManagement: StreamManagementComponent get() = requireComponent(StreamManagementComponent)
 
 private fun String?.toBooleanLike(): Boolean {
     if (this == null) return false

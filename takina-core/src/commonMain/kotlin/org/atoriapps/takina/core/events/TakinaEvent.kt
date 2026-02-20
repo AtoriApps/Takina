@@ -1,27 +1,26 @@
 ﻿package org.atoriapps.takina.core.events
 
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.callbackFlow
 import org.atoriapps.takina.core.TakinaContext
-import org.atoriapps.takina.core.utils.LanguageUtils.clzName
-import org.atoriapps.takina.core.utils.LogUtils
-import java.time.Instant
-import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.reflect.KClass
 
 interface TakinaEventHandler<in T : TakinaEvent> {
     fun onEvent(event: T, context: TakinaContext)
 }
 
-abstract class TakinaEvent {
-    /*var eventTime: Instant = Instant.DISTANT_PAST
-        internal set*/
+abstract class TakinaEvent{
+    abstract val description: String
 }
 
 interface TakinaEventDescriber<EVENT : TakinaEvent> {
-    // 啊
-    fun getEventTokens(): List<String>
+    val eventTokens: List<String>
 
-    // 呃
-    fun getEventType(): KClass<EVENT>
+    val eventType: KClass<EVENT>
 }
 
 interface TakinaEventBusInterface {
@@ -33,23 +32,34 @@ interface TakinaEventBusInterface {
     fun shutdown()
 }
 
+data class TakinaEventFlowBackpressure(
+    val capacity: Int = Channel.BUFFERED,
+    val overflow: BufferOverflow = BufferOverflow.SUSPEND,
+) {
+    init {
+        require(capacity >= 0 || capacity == Channel.BUFFERED || capacity == Channel.CONFLATED || capacity == Channel.UNLIMITED) {
+            "capacity 必须为非负数或 Channel 常量"
+        }
+    }
+}
+
 abstract class AbstractTakinaEventBus(val context: TakinaContext) : TakinaEventBusInterface {
-    private val lambdaToHandler = mutableMapOf<Any, TakinaEventHandler<TakinaEvent>>()
+    private val lambdaToHandler = linkedMapOf<Any, TakinaEventHandler<TakinaEvent>>()
 
     fun <EVENT : TakinaEvent> on(takinaEventClz: TakinaEventDescriber<EVENT>, handler: TakinaEventHandler<EVENT>) {
-        on(takinaEventClz.getEventType(), handler)
+        on(takinaEventClz.eventType, handler)
     }
 
     fun <EVENT : TakinaEvent> removeOn(takinaEventClz: TakinaEventDescriber<EVENT>, handler: TakinaEventHandler<EVENT>) {
-        removeOn(takinaEventClz.getEventType(), handler)
+        removeOn(takinaEventClz.eventType, handler)
     }
 
     fun <EVENT:TakinaEvent> on(takinaEventClz: TakinaEventDescriber<EVENT>, handler: (EVENT) -> Unit) {
-        on(takinaEventClz.getEventType(), handler)
+        on(takinaEventClz.eventType, handler)
     }
 
     fun <EVENT:TakinaEvent> removeOn(takinaEventClz: TakinaEventDescriber<EVENT>, handler: (EVENT) -> Unit) {
-        removeOn(takinaEventClz.getEventType(), handler)
+        removeOn(takinaEventClz.eventType, handler)
     }
 
     fun <EVENT : TakinaEvent> on(takinaEventClz: KClass<EVENT>, handler: (EVENT) -> Unit) {
@@ -59,42 +69,37 @@ abstract class AbstractTakinaEventBus(val context: TakinaContext) : TakinaEventB
                 handler(event)
             }
         }
-        lambdaToHandler[handler] = wrappedHandler as TakinaEventHandler<TakinaEvent>
+        synchronized(lambdaToHandler) { lambdaToHandler[handler] = wrappedHandler as TakinaEventHandler<TakinaEvent> }
         on(takinaEventClz, wrappedHandler)
     }
 
     fun <EVENT : TakinaEvent> removeOn(takinaEventClz: KClass<EVENT>, handler: (EVENT) -> Unit) {
-        val wrappedHandler = lambdaToHandler.remove(handler) as? TakinaEventHandler<EVENT>
+        val wrappedHandler = synchronized(lambdaToHandler) { lambdaToHandler.remove(handler) } as? TakinaEventHandler<EVENT>
         wrappedHandler?.let { removeOn(takinaEventClz, it) }
     }
 
-    /*@Deprecated("正在升级新范式")
-    inline fun <reified EVENT : TakinaEvent> on(noinline handler: (EVENT) -> Unit) {
-        val wrappedHandler = object : TakinaEventHandler<EVENT> {
+    fun <EVENT : TakinaEvent> flow(
+        takinaEventClz: KClass<EVENT>,
+        backpressure: TakinaEventFlowBackpressure = TakinaEventFlowBackpressure(),
+    ): Flow<EVENT> = callbackFlow {
+        val handler = object : TakinaEventHandler<EVENT> {
             override fun onEvent(event: EVENT, context: TakinaContext) {
-                // Lambda 不传入 Context，不然使用不够轻松
-                handler(event)
+                trySend(event)
             }
         }
-        lambdaToHandler[handler] = wrappedHandler as TakinaEventHandler<TakinaEvent>
-        on(EVENT::class, wrappedHandler)
-    }
 
-    @Deprecated("正在升级新范式")
-    inline fun <reified EVENT : TakinaEvent> removeOn(noinline handler: (EVENT) -> Unit) {
-        val wrappedHandler = lambdaToHandler.remove(handler) as? TakinaEventHandler<EVENT>
-        wrappedHandler?.let { removeOn(EVENT::class, it) }
-    }*/
+        on(takinaEventClz, handler)
+        awaitClose { removeOn(takinaEventClz, handler) }
+    }.buffer(capacity = backpressure.capacity, onBufferOverflow = backpressure.overflow)
 
-    /*@Deprecated("正在升级新范式")
-    inline fun <reified EVENT : TakinaEvent> on(handler: TakinaEventHandler<EVENT>) {
-        on(EVENT::class, handler)
-    }
+    fun <EVENT : TakinaEvent> flow(
+        takinaEventClz: TakinaEventDescriber<EVENT>,
+        backpressure: TakinaEventFlowBackpressure = TakinaEventFlowBackpressure(),
+    ): Flow<EVENT> = flow(takinaEventClz.eventType, backpressure)
 
-    @Deprecated("正在升级新范式")
-    inline fun <reified EVENT : TakinaEvent> removeOn(handler: TakinaEventHandler<EVENT>) {
-        removeOn(EVENT::class, handler)
-    }*/
+    inline fun <reified EVENT : TakinaEvent> flow(
+        backpressure: TakinaEventFlowBackpressure = TakinaEventFlowBackpressure(),
+    ): Flow<EVENT> = flow(EVENT::class, backpressure)
 }
 
 expect class TakinaEventBus(context: TakinaContext) : AbstractTakinaEventBus

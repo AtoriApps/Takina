@@ -29,7 +29,7 @@ class ComponentsProtocolTest {
             }
         }
 
-        val capsComponent = takina.capabilities()
+        val capsComponent = takina.capabilities
         val caps = capsComponent.build(
             node = "https://takina.im",
             ver = "caps-v1",
@@ -65,7 +65,7 @@ class ComponentsProtocolTest {
             }
         }
 
-        val sm = takina.streamManagement()
+        val sm = takina.streamManagement
         val state = sm.stateFor(jid)
         assertTrue(sm.shouldAutoReconnect(state))
         sm.markReconnectAttempt(state)
@@ -167,7 +167,7 @@ class ComponentsProtocolTest {
             }
         }
 
-        val sm = takina.streamManagement()
+        val sm = takina.streamManagement
         val state = sm.stateFor(jid)
         val enabled = sm.parseInboundFrame("<enabled xmlns='urn:xmpp:sm:3' id='sm-persist' resume='true' max='120'/>")
         assertIs<StreamManagementComponent.InboundFrame.Enabled>(enabled)
@@ -199,7 +199,7 @@ class ComponentsProtocolTest {
             }
         }
 
-        val smRestored = takinaRestored.streamManagement()
+        val smRestored = takinaRestored.streamManagement
         val restoredState = smRestored.stateFor(jid)
         assertTrue(restoredState.enabled)
         assertEquals("sm-persist", restoredState.sessionId)
@@ -241,7 +241,7 @@ class ComponentsProtocolTest {
             }
         }
 
-        val sm = takina.streamManagement()
+        val sm = takina.streamManagement
         val state = sm.stateFor(jid)
         assertFalse(state.enabled)
         assertEquals(null, state.sessionId)
@@ -259,7 +259,7 @@ class ComponentsProtocolTest {
             }
         }
 
-        val receipts = takina.receipts()
+        val receipts = takina.receipts
         val message = takina.request.message {
             from = jid
             to = "bob@example.com".toBareJid()
@@ -300,7 +300,7 @@ class ComponentsProtocolTest {
             }
         }
 
-        val carbons = takina.carbons()
+        val carbons = takina.carbons
         val enableXml = carbons.enable(from = jid).toXml()
         assertTrue(enableXml.contains("<iq"))
         assertTrue(enableXml.contains("type='set'"))

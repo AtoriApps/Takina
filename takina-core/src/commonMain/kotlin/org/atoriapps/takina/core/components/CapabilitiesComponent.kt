@@ -3,6 +3,7 @@ package org.atoriapps.takina.core.components
 import org.atoriapps.takina.core.TakinaContext
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
+import org.atoriapps.takina.core.xml.XmlRegexUtils
 import org.atoriapps.takina.core.xmpp.stanzas.PresenceStanza
 
 class CapabilitiesComponent : TakinaComponent {
@@ -39,20 +40,14 @@ class CapabilitiesComponent : TakinaComponent {
         if (rootLocalName != "presence") return null
 
         val tagMatch = CAPS_TAG_REGEX.find(xml) ?: return null
-        val attrs = parseAttributes(tagMatch.groupValues[1])
-        val namespace = attrs["xmlns"] ?: attrs.entries.firstOrNull { it.key.startsWith("xmlns:") }?.value
+        val attrs = XmlRegexUtils.parseAttributes(tagMatch.groupValues[1])
+        val namespace = XmlRegexUtils.extractNamespace(attrs)
         if (namespace != NAMESPACE) return null
 
         val node = attrs["node"] ?: return null
         val ver = attrs["ver"] ?: return null
         val hash = attrs["hash"] ?: "sha-1"
         return EntityCapabilities(node = node, ver = ver, hash = hash)
-    }
-
-    private fun parseAttributes(raw: String): Map<String, String> = buildMap {
-        ATTRIBUTE_REGEX.findAll(raw).forEach { match ->
-            put(match.groupValues[1], match.groupValues[3])
-        }
     }
 }
 
@@ -72,7 +67,6 @@ fun EntityCapabilities.toCapsXmlElement(): XmlElement = XmlElement(
     ),
 )
 
-fun TakinaContext.capabilities(): CapabilitiesComponent = requireComponent(CapabilitiesComponent)
+val TakinaContext.capabilities: CapabilitiesComponent get() = requireComponent(CapabilitiesComponent)
 
 private val CAPS_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?c\b([^>]*)/?>""")
-private val ATTRIBUTE_REGEX = Regex("""([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*(['"])(.*?)\2""")

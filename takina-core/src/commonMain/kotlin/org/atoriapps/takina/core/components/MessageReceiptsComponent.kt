@@ -4,6 +4,7 @@ import org.atoriapps.takina.core.AbstractTakina
 import org.atoriapps.takina.core.TakinaContext
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
+import org.atoriapps.takina.core.xml.XmlRegexUtils
 import org.atoriapps.takina.core.xmpp.Jid
 import org.atoriapps.takina.core.xmpp.toJid
 import org.atoriapps.takina.core.xmpp.stanzas.MessageStanza
@@ -56,8 +57,8 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
         if (rootLocalName != "message") return null
 
         val received = RECEIVED_TAG_REGEX.find(xml)?.let { match ->
-            val attrs = parseAttributes(match.groupValues[1])
-            val namespace = attrs["xmlns"] ?: attrs.entries.firstOrNull { it.key.startsWith("xmlns:") }?.value
+            val attrs = XmlRegexUtils.parseAttributes(match.groupValues[1])
+            val namespace = XmlRegexUtils.extractNamespace(attrs)
             if (namespace == NAMESPACE) {
                 val id = attrs["id"] ?: return@let null
                 return@let ParsedReceiptEnvelope(
@@ -73,8 +74,8 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
         if (received != null) return received
 
         val request = REQUEST_TAG_REGEX.find(xml)?.let { match ->
-            val attrs = parseAttributes(match.groupValues[1])
-            val namespace = attrs["xmlns"] ?: attrs.entries.firstOrNull { it.key.startsWith("xmlns:") }?.value
+            val attrs = XmlRegexUtils.parseAttributes(match.groupValues[1])
+            val namespace = XmlRegexUtils.extractNamespace(attrs)
             if (namespace == NAMESPACE) ParsedReceiptEnvelope(
                 frame = ReceiptFrame.Request,
                 from = parsedRoot.attributes["from"]?.toJidOrNull(),
@@ -135,12 +136,6 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
         return true
     }
 
-    private fun parseAttributes(raw: String): Map<String, String> = buildMap {
-        ATTRIBUTE_REGEX.findAll(raw).forEach { match ->
-            put(match.groupValues[1], match.groupValues[3])
-        }
-    }
-
     private fun parseMessageType(value: String): MessageType = MessageType.entries.firstOrNull { it.wireValue == value } ?: MessageType.NORMAL
 
     sealed interface ReceiptFrame {
@@ -160,10 +155,9 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
     )
 }
 
-fun TakinaContext.receipts(): MessageReceiptsComponent = requireComponent(MessageReceiptsComponent)
+val TakinaContext.receipts: MessageReceiptsComponent get() = requireComponent(MessageReceiptsComponent)
 
 private val REQUEST_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?request\b([^>]*)/?>""")
 private val RECEIVED_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?received\b([^>]*)/?>""")
-private val ATTRIBUTE_REGEX = Regex("""([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*(['"])(.*?)\2""")
 
 private fun String.toJidOrNull(): Jid? = runCatching { toJid() }.getOrNull()

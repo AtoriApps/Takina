@@ -5,9 +5,11 @@ import org.atoriapps.takina.core.xmpp.BareJid
 import kotlin.reflect.KClass
 
 class ConnectionConnectedEvent(val jid: BareJid) : TakinaEvent() {
+    override val description = "账号=$jid"
+
     companion object : TakinaEventDescriber<ConnectionConnectedEvent> {
-        override fun getEventTokens(): List<String> = listOf("connection", "connected")
-        override fun getEventType(): KClass<ConnectionConnectedEvent> = ConnectionConnectedEvent::class
+        override val eventTokens = listOf("connection", "connected")
+        override val eventType = ConnectionConnectedEvent::class
     }
 }
 
@@ -15,9 +17,11 @@ class ConnectionFailedEvent(
     val jid: BareJid,
     val reason: String,
 ) : TakinaEvent() {
+    override val description = "账号=$jid 原因=$reason"
+
     companion object : TakinaEventDescriber<ConnectionFailedEvent> {
-        override fun getEventTokens(): List<String> = listOf("connection", "failed")
-        override fun getEventType(): KClass<ConnectionFailedEvent> = ConnectionFailedEvent::class
+        override val eventTokens = listOf("connection", "failed")
+        override val eventType = ConnectionFailedEvent::class
     }
 }
 
@@ -25,16 +29,20 @@ class AllConnectedEvent(
     val connectedCount: Int,
     val configuredCount: Int,
 ) : TakinaEvent() {
+    override val description: String = "成功=$connectedCount/$configuredCount"
+
     companion object : TakinaEventDescriber<AllConnectedEvent> {
-        override fun getEventTokens(): List<String> = listOf("all", "connected")
-        override fun getEventType(): KClass<AllConnectedEvent> = AllConnectedEvent::class
+        override val eventTokens = listOf("all", "connected")
+        override val eventType = AllConnectedEvent::class
     }
 }
 
 class AllDisconnectedEvent(val connectionCount: Int) : TakinaEvent() {
+    override val description: String = "连接数=$connectionCount"
+
     companion object : TakinaEventDescriber<AllDisconnectedEvent> {
-        override fun getEventTokens(): List<String> = listOf("all", "disconnected")
-        override fun getEventType(): KClass<AllDisconnectedEvent> = AllDisconnectedEvent::class
+        override val eventTokens = listOf("all", "disconnected")
+        override val eventType = AllDisconnectedEvent::class
     }
 }
 
@@ -43,9 +51,11 @@ class StanzaReceivedEvent(
     val stanzaType: String,
     val xml: String,
 ) : TakinaEvent() {
+    override val description: String = "账号=$jid 类型=$stanzaType"
+
     companion object : TakinaEventDescriber<StanzaReceivedEvent> {
-        override fun getEventTokens(): List<String> = listOf("stanza", "received")
-        override fun getEventType(): KClass<StanzaReceivedEvent> = StanzaReceivedEvent::class
+        override val eventTokens = listOf("stanza", "received")
+        override val eventType = StanzaReceivedEvent::class
     }
 }
 
@@ -53,9 +63,11 @@ class ConnectionClosedEvent(
     val jid: BareJid,
     val reason: String,
 ) : TakinaEvent() {
+    override val description: String = "账号=$jid 原因=$reason"
+
     companion object : TakinaEventDescriber<ConnectionClosedEvent> {
-        override fun getEventTokens(): List<String> = listOf("connection", "closed")
-        override fun getEventType(): KClass<ConnectionClosedEvent> = ConnectionClosedEvent::class
+        override val eventTokens = listOf("connection", "closed")
+        override val eventType = ConnectionClosedEvent::class
     }
 }
 
@@ -64,8 +76,10 @@ class ConnectionStageChangedEvent(
     val oldStage: ConnectionLifecycleStage,
     val newStage: ConnectionLifecycleStage,
 ) : TakinaEvent() {
+    override val description: String = "账号=$jid 阶段=$oldStage -> $newStage"
+
     companion object : TakinaEventDescriber<ConnectionStageChangedEvent> {
-        override fun getEventTokens(): List<String> = listOf("connection", "stage", "changed")
-        override fun getEventType(): KClass<ConnectionStageChangedEvent> = ConnectionStageChangedEvent::class
+        override val eventTokens = listOf("connection", "stage", "changed")
+        override val eventType = ConnectionStageChangedEvent::class
     }
 }

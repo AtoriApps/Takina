@@ -82,4 +82,4 @@ class DiscoveryComponent internal constructor(
     }
 }
 
-fun TakinaContext.discovery(): DiscoveryComponent = requireComponent(DiscoveryComponent)
+val TakinaContext.discovery: DiscoveryComponent get() = requireComponent(DiscoveryComponent)

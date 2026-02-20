@@ -18,8 +18,11 @@ import kotlin.reflect.KClass
 
 fun createTakina(registerAllComponents: Boolean = true, init: TakinaConfiguration.() -> Unit): Takina {
     val configuration = TakinaConfiguration()
+
     if (registerAllComponents) configuration.registerAllComponents() else configuration.registerCoreComponents()
+
     configuration.init()
+
     return Takina(configuration)
 }
 
@@ -27,8 +30,7 @@ fun createTakina(registerAllComponents: Boolean = true, init: TakinaConfiguratio
 class TakinaConfiguration {
     internal val accountConfigurations = mutableListOf<AccountConfiguration>()
     internal val componentConfigurationsForAdd = mutableListOf<Any>()
-    internal val componentConfigurations
-        get() = componentConfigurationsForAdd.filterIsInstance<ComponentConfigurationPair<TakinaComponent>>()
+    internal val componentConfigurations get() = componentConfigurationsForAdd.filterIsInstance<ComponentConfigurationPair<TakinaComponent>>()
 
     class ComponentConfigurationPair<T : TakinaComponent>(
         val clz: KClass<T>,

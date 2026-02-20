@@ -6,17 +6,6 @@ import kotlin.reflect.KClass
 object LanguageUtils {
     val KClass<*>.clzName: String
         get() = this.simpleName ?: this.qualifiedName?.substringAfterLast('.') ?: "UnnamedClass"
-
-    fun <T> MutableList<T>.findOrAdd(predicate: (T) -> Boolean, factory: () -> T): T {
-        val found = find(predicate)
-        return if (found == null) {
-            val new = factory()
-            add(new)
-            new
-        } else {
-            found
-        }
-    }
 }
 
 object IdUtils {
@@ -28,13 +17,15 @@ object IdUtils {
     }
 }
 
-object LogUtils {
-    private fun print(method: String, tag: String, vararg message: Any) {
-        println("[$method] $tag > ${message.joinToString(" ")}")
-    }
+expect fun platformPrint(method: LogUtils.Method, tag: String, message: String)
 
-    fun info(tag: String, vararg message: Any) = print("INFO", tag, *message)
-    fun debug(tag: String, vararg message: Any) = print("DEBUG", tag, *message)
-    fun warn(tag: String, vararg message: Any) = print("WARN", tag, *message)
-    fun error(tag: String, vararg message: Any) = print("ERROR", tag, *message)
+object LogUtils {
+    private fun print(method: Method, tag: String, vararg message: Any) = platformPrint(method, tag, message.joinToString(" "))
+
+    enum class Method(val displayName: String) { INFO("I"), DEBUG("D"), WARN("W"), ERROR("E") }
+
+    fun info(tag: String, vararg message: Any) = print(Method.INFO, tag, *message)
+    fun debug(tag: String, vararg message: Any) = print(Method.DEBUG, tag, *message)
+    fun warn(tag: String, vararg message: Any) = print(Method.WARN, tag, *message)
+    fun error(tag: String, vararg message: Any) = print(Method.ERROR, tag, *message)
 }

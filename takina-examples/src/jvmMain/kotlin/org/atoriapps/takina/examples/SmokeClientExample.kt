@@ -28,9 +28,7 @@ fun main() {
     val password = System.getenv("TAKINA_PASSWORD") ?: error("TAKINA_PASSWORD is required")
     val host = System.getenv("TAKINA_HOST") ?: jid.domain
     val port = System.getenv("TAKINA_PORT")?.toIntOrNull()
-    val security = runCatching {
-        SecurityMode.valueOf(System.getenv("TAKINA_SECURITY") ?: "START_TLS")
-    }.getOrDefault(SecurityMode.START_TLS)
+    val security = runCatching { SecurityMode.valueOf(System.getenv("TAKINA_SECURITY") ?: "START_TLS") }.getOrDefault(SecurityMode.START_TLS)
     val resource = System.getenv("TAKINA_RESOURCE") ?: "takina-smoke"
 
     val takina = createTakina(registerAllComponents = false) {
@@ -38,6 +36,7 @@ fun main() {
         registerComponent(CarbonsComponent)
         registerComponent(StreamManagementComponent)
         registerComponent(MessageReceiptsComponent)
+
         addAccount {
             this.jid = jid
             this.password { password }
@@ -46,25 +45,19 @@ fun main() {
         }
     }
 
-    takina.events.on(ConnectionFailedEvent) {
-        println("连接失败：${it.jid} -> ${it.reason}")
-    }
-    takina.events.on(ConnectionClosedEvent) {
-        println("连接关闭：${it.jid} -> ${it.reason}")
-    }
-    takina.events.on(StanzaReceivedEvent) {
-        println("入站 ${it.stanzaType}：${it.xml}")
-    }
+    takina.events.on(ConnectionFailedEvent) { println("连接失败：${it.jid} -> ${it.reason}") }
+    takina.events.on(ConnectionClosedEvent) { println("连接关闭：${it.jid} -> ${it.reason}") }
+    takina.events.on(StanzaReceivedEvent) { println("入站 ${it.stanzaType}：${it.xml}") }
 
     takina.connect(jid)
 
     takina.request.presence {
         from = jid
-        status = "Takina smoke test online"
+        status = "Proudly using Takina, made in China!"
     }.send()
 
     runBlocking {
-        val result = takina.discovery().discoInfoAwait(
+        val result = takina.discovery.discoInfoAwait(
             from = jid,
             to = createBareJid(domain = jid.domain),
             timeoutMillis = 8_000,

@@ -14,11 +14,12 @@ import org.atoriapps.takina.core.xmpp.stanzas.MessageType
 
 class MessageReceiptsComponent internal constructor(private val takina: AbstractTakina) : TakinaInboundStanzaInterceptor {
     companion object : TakinaComponentProvider<MessageReceiptsComponent> {
+        private const val TAG = "MessageReceiptsComponent"
+
         const val NAMESPACE: String = "urn:xmpp:receipts"
 
         override fun getInstance(context: TakinaContext): MessageReceiptsComponent {
-            val core = context as? AbstractTakina
-                ?: error("MessageReceiptsComponent 只能安装在 Takina 核心上下文中")
+            val core = context as? AbstractTakina ?: error("MessageReceiptsComponent 只能安装在 Takina 核心上下文中")
             return MessageReceiptsComponent(core)
         }
 
@@ -34,10 +35,9 @@ class MessageReceiptsComponent internal constructor(private val takina: Abstract
         context: TakinaContext,
     ): TakinaInboundStanzaInterceptResult {
         if (stanzaType != "message" || !autoReplyEnabled) return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
-        val replyStanza = buildReceivedReply(selfJid = connection.boundJid, inboundMessageXml = xml)
-            ?: return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
+        val replyStanza = buildReceivedReply(selfJid = connection.boundJid, inboundMessageXml = xml) ?: return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
         runCatching { takina.sendStanza(connection.boundJid, replyStanza) }
-            .onFailure { error -> LogUtils.warn("MessageReceiptsComponent", "自动发送消息回执失败", connection.boundJid, error.message ?: "未知错误") }
+            .onFailure { error -> LogUtils.warn(TAG, "自动发送消息回执失败", connection.boundJid, error.message ?: "未知错误") }
         return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
     }
 

@@ -25,8 +25,7 @@ class CarbonsComponent internal constructor(
         const val FORWARDED_NAMESPACE: String = "urn:xmpp:forward:0"
 
         override fun getInstance(context: TakinaContext): CarbonsComponent {
-            val core = context as? AbstractTakina
-                ?: error("CarbonsComponent 只能安装在 Takina 核心上下文中")
+            val core = context as? AbstractTakina ?: error("CarbonsComponent 只能安装在 Takina 核心上下文中")
             return CarbonsComponent(core)
         }
 

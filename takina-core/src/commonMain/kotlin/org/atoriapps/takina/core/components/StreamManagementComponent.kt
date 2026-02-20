@@ -19,8 +19,7 @@ class StreamManagementComponent internal constructor(
         const val NAMESPACE: String = "urn:xmpp:sm:3"
 
         override fun getInstance(context: TakinaContext): StreamManagementComponent {
-            val core = context as? AbstractTakina
-                ?: error("StreamManagementComponent 只能安装在 Takina 核心上下文中")
+            val core = context as? AbstractTakina ?: error("StreamManagementComponent 只能安装在 Takina 核心上下文中")
             return StreamManagementComponent(core)
         }
 

@@ -28,6 +28,10 @@ fun createTakina(registerAllComponents: Boolean = true, init: TakinaConfiguratio
 
 @TakinaConfigDsl
 class TakinaConfiguration {
+    companion object {
+        private const val TAG = "TakinaConfiguration"
+    }
+
     internal val accountConfigurations = mutableListOf<AccountConfiguration>()
     internal val componentConfigurationsForAdd = mutableListOf<Any>()
     internal val componentConfigurations get() = componentConfigurationsForAdd.filterIsInstance<ComponentConfigurationPair<TakinaComponent>>()
@@ -63,7 +67,7 @@ class TakinaConfiguration {
         val jid = config.jid?.bareJid ?: throw IllegalArgumentException("账号 JID 不能为空")
         config.requirePasswordProvider()
         require(accountConfigurations.none { it.jid?.bareJid == jid }) { "账号 $jid 已被添加" }
-        LogUtils.debug("TakinaConfiguration", "添加账号", jid)
+        LogUtils.debug(TAG, "添加账号", jid)
         accountConfigurations += config
     }
 

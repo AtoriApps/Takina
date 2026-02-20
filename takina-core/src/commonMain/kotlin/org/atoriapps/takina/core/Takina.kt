@@ -76,8 +76,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         }
 
         orderedComponents.forEach { component ->
-            runCatching { component.onInstall(this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件安装回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { component.onInstall(this) }.onFailure { error -> LogUtils.error(TAG, "组件安装回调异常", component::class.clzName, error.message ?: "未知错误") }
         }
     }
 

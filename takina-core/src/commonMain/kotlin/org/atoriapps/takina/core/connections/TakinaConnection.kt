@@ -3,6 +3,7 @@ package org.atoriapps.takina.core.connections
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import org.atoriapps.takina.core.exceptions.ConnectionFailureKind
 import org.atoriapps.takina.core.exceptions.NotConnectedException
 import org.atoriapps.takina.core.exceptions.TakinaConnectionException
 import org.atoriapps.takina.core.utils.IdUtils
@@ -79,13 +80,21 @@ class TakinaConnection(
 
             if (config.securityMode == SecurityMode.START_TLS) {
                 if (!XmppProtocol.containsStartTls(featuresXml)) {
-                    throw TakinaConnectionException("server does not advertise STARTTLS for ${config.jid.domain}")
+                    throw TakinaConnectionException(
+                        message = "服务端不支持 STARTTLS，无法继续连接",
+                        kind = ConnectionFailureKind.STARTTLS_UNSUPPORTED,
+                        detail = "server does not advertise STARTTLS for ${config.jid.domain}",
+                    )
                 }
 
                 createdConnector.send(XmppStream.startTlsRequest())
                 val startTlsResponse = createdConnector.readFrame(config.connectTimeoutMillis)
                 if (!XmppProtocol.isStartTlsProceed(startTlsResponse)) {
-                    throw TakinaConnectionException("STARTTLS negotiation failed: $startTlsResponse")
+                    throw TakinaConnectionException(
+                        message = "TLS 协商失败",
+                        kind = ConnectionFailureKind.TLS_NEGOTIATION_FAILED,
+                        detail = startTlsResponse,
+                    )
                 }
                 createdConnector.upgradeToTls(config)
                 moveLifecycle(
@@ -98,13 +107,22 @@ class TakinaConnection(
             }
 
             if (!XmppProtocol.containsMechanism(featuresXml, "PLAIN")) {
-                throw TakinaConnectionException("server does not advertise SASL PLAIN")
+                throw TakinaConnectionException(
+                    message = "服务端不支持 SASL PLAIN，无法认证",
+                    kind = ConnectionFailureKind.AUTH_MECHANISM_UNSUPPORTED,
+                    detail = featuresXml,
+                )
             }
 
             createdConnector.send(XmppStream.authPlain(config.jid, passwordProvider()))
             val authResult = createdConnector.readFrame(config.connectTimeoutMillis)
             if (!XmppProtocol.isSaslSuccess(authResult)) {
-                throw TakinaConnectionException("SASL authentication failed: $authResult")
+                val saslFailure = parseSaslFailure(authResult)
+                throw TakinaConnectionException(
+                    message = saslFailure.userMessage,
+                    kind = saslFailure.kind,
+                    detail = authResult,
+                )
             }
             moveLifecycle(
                 target = ConnectionLifecycleStage.AUTHENTICATED,
@@ -133,10 +151,12 @@ class TakinaConnection(
             state = ConnectionState.DISCONNECTED
             runCatching { createdConnector.close() }
             lastFeaturesXml = null
-            failAllPendingIqRequests(TakinaConnectionException("connection failed for account $boundJid", t))
+            val normalized = normalizeConnectFailure(t)
+            failAllPendingIqRequests(normalized)
             forceLifecycle(ConnectionLifecycleStage.DISCONNECTED)
-            LogUtils.error(TAG, "连接失败", boundJid, t.message ?: "未知错误")
-            throw TakinaConnectionException("failed to connect account $boundJid", t)
+            val detail = normalized.detail?.takeIf { it.isNotBlank() } ?: t.message ?: "未知错误"
+            LogUtils.error(TAG, "连接失败", boundJid, "原因=${normalized.message}", "细节=$detail")
+            throw normalized
         }
     }
 
@@ -230,8 +250,16 @@ class TakinaConnection(
             if (XmppProtocol.rootName(frame) != "iq") return@repeat
             val attrs = XmppProtocol.rootAttributes(frame)
             if (attrs["id"] != requestId) return@repeat
-            val type = attrs["type"] ?: throw TakinaConnectionException("bind result misses iq@type")
-            if (type != "result") throw TakinaConnectionException("resource binding failed: $frame")
+            val type = attrs["type"] ?: throw TakinaConnectionException(
+                message = "资源绑定失败：返回缺少 iq@type",
+                kind = ConnectionFailureKind.RESOURCE_BIND_FAILED,
+                detail = frame,
+            )
+            if (type != "result") throw TakinaConnectionException(
+                message = "资源绑定失败：服务端拒绝绑定",
+                kind = ConnectionFailureKind.RESOURCE_BIND_FAILED,
+                detail = frame,
+            )
             moveLifecycle(
                 target = ConnectionLifecycleStage.RESOURCE_BOUND,
                 allowedFrom = setOf(ConnectionLifecycleStage.STREAM_OPENED),
@@ -239,7 +267,11 @@ class TakinaConnection(
             )
             return
         }
-        throw TakinaConnectionException("resource binding timeout for account $boundJid")
+        throw TakinaConnectionException(
+            message = "资源绑定超时，请检查网络或服务端状态",
+            kind = ConnectionFailureKind.NETWORK_TIMEOUT,
+            detail = "resource binding timeout for account $boundJid",
+        )
     }
 
     private fun handleIncomingFrame(frame: String) {
@@ -280,7 +312,7 @@ class TakinaConnection(
         connector = null
         lastFeaturesXml = null
         LogUtils.warn(TAG, "连接异常关闭", boundJid, error.message ?: "未知错误")
-        failAllPendingIqRequests(TakinaConnectionException("connection frame pump failed", error))
+        failAllPendingIqRequests(normalizeConnectFailure(error))
         forceLifecycle(ConnectionLifecycleStage.DISCONNECTED)
         onConnectionClosed(this, error.message ?: "连接中断")
     }
@@ -309,6 +341,82 @@ class TakinaConnection(
             waiter.completeExceptionally(error)
         }
     }
+
+    private fun parseSaslFailure(authResultXml: String): SaslFailure {
+        val lowered = authResultXml.lowercase()
+        return when {
+            lowered.contains("<not-authorized") -> SaslFailure(
+                userMessage = "账号或密码错误，请检查后重试",
+                kind = ConnectionFailureKind.INVALID_CREDENTIALS,
+            )
+
+            lowered.contains("<temporary-auth-failure") -> SaslFailure(
+                userMessage = "服务端认证临时失败，请稍后重试",
+                kind = ConnectionFailureKind.SERVER_REJECTED,
+            )
+
+            else -> SaslFailure(
+                userMessage = "登录认证失败，请检查账号配置",
+                kind = ConnectionFailureKind.SERVER_REJECTED,
+            )
+        }
+    }
+
+    private fun normalizeConnectFailure(error: Throwable): TakinaConnectionException {
+        if (error is TakinaConnectionException) return error
+
+        val causeMessage = generateSequence(error as Throwable?) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" | ")
+            .ifBlank { "未知错误" }
+        val normalized = classifyByMessage(causeMessage)
+        return TakinaConnectionException(
+            message = normalized.userMessage,
+            cause = error,
+            kind = normalized.kind,
+            detail = causeMessage,
+        )
+    }
+
+    private fun classifyByMessage(message: String): NormalizedFailure {
+        val lowered = message.lowercase()
+        return when {
+            lowered.contains("read timed out") || lowered.contains("timed out") -> NormalizedFailure(
+                userMessage = "连接超时，请检查网络或服务端状态",
+                kind = ConnectionFailureKind.NETWORK_TIMEOUT,
+            )
+
+            lowered.contains("unknownhost") || lowered.contains("no address associated") || lowered.matches(Regex("""^[a-z0-9.-]+\.[a-z]{2,}$""")) -> NormalizedFailure(
+                userMessage = "无法解析服务器域名，请检查服务器地址或 DNS",
+                kind = ConnectionFailureKind.DNS_RESOLUTION_FAILED,
+            )
+
+            lowered.contains("connection closed while waiting for frame") || lowered.contains("broken pipe") || lowered.contains("connection reset") || lowered.contains("eof") -> NormalizedFailure(
+                userMessage = "连接被中断，请检查网络稳定性后重试",
+                kind = ConnectionFailureKind.CONNECTION_CLOSED,
+            )
+
+            lowered.contains("network is unreachable") || lowered.contains("no route to host") -> NormalizedFailure(
+                userMessage = "网络不可达，请确认网络连接后重试",
+                kind = ConnectionFailureKind.NETWORK_UNREACHABLE,
+            )
+
+            else -> NormalizedFailure(
+                userMessage = "连接失败，请检查网络和账号配置",
+                kind = ConnectionFailureKind.UNKNOWN,
+            )
+        }
+    }
+
+    private data class SaslFailure(
+        val userMessage: String,
+        val kind: ConnectionFailureKind,
+    )
+
+    private data class NormalizedFailure(
+        val userMessage: String,
+        val kind: ConnectionFailureKind,
+    )
 }
 
 abstract class AbstractConnector {

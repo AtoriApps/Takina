@@ -3,6 +3,7 @@ package org.atoriapps.takina.core.components
 import org.atoriapps.takina.core.AbstractTakina
 import org.atoriapps.takina.core.TakinaContext
 import org.atoriapps.takina.core.connections.TakinaConnection
+import org.atoriapps.takina.core.exceptions.TakinaConnectionException
 import org.atoriapps.takina.core.utils.LogUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
@@ -77,10 +78,12 @@ class StreamManagementComponent internal constructor(
             LogUtils.warn(TAG, "SM 自动重连开始", jid, "attempt=$attempt")
             val result = runCatching { takina.connect(jid) }
             if (result.isSuccess) return LogUtils.warn(TAG, "SM 自动重连成功", jid, "attempt=$attempt")
-            LogUtils.warn(TAG, "SM 自动重连失败", jid, "attempt=$attempt", result.exceptionOrNull()?.message ?: "未知错误")
+            val err = result.exceptionOrNull()
+            val kind = (err as? TakinaConnectionException)?.kind?.name ?: "UNKNOWN"
+            LogUtils.warn(TAG, "SM 自动重连失败", jid, "attempt=$attempt", "kind=$kind", err?.message ?: "未知错误")
             if (autoReconnectDelayMillis > 0 && shouldAutoReconnect(state)) runCatching { Thread.sleep(autoReconnectDelayMillis.toLong()) }
         }
-        LogUtils.warn(TAG, "SM 自动重连次数已达上限", jid, "max=$autoReconnectMaxAttempts")
+        LogUtils.warn(TAG, "SM 自动重连次数已达上限", jid, "max=$autoReconnectMaxAttempts", "可调大 autoReconnectMaxAttempts/autoReconnectDelayMillis 后再试")
     }
 
     override fun interceptInboundStanza(

@@ -9,6 +9,7 @@ import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.IqResult
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.connections.TakinaConnection
+import org.atoriapps.takina.core.exceptions.ConnectionFailureKind
 import org.atoriapps.takina.core.exceptions.TakinaConnectionException
 import org.atoriapps.takina.core.xmpp.toBareJid
 import org.atoriapps.takina.core.xmpp.stanzas.IqStanza
@@ -84,9 +85,36 @@ class TakinaConnectionTest {
             connectorFactory = { fake },
         )
 
-        assertFailsWith<TakinaConnectionException> {
+        val error = assertFailsWith<TakinaConnectionException> {
             connection.connect()
         }
+        assertEquals(ConnectionFailureKind.AUTH_MECHANISM_UNSUPPORTED, error.kind)
+    }
+
+    @Test
+    fun plainHandshake_withInvalidCredentials_shouldFailWithFriendlyReason() {
+        val fake = FakeConnector(
+            frames = listOf(
+                "<stream:stream xmlns:stream='http://etherx.jabber.org/streams'/>",
+                "<stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>",
+                "<failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><not-authorized/><text xml:lang='en'>Invalid username or password</text></failure>",
+            ),
+        )
+        val connection = TakinaConnection(
+            config = ConnectionConfig(
+                jid = "alice@example.com".toBareJid(),
+                host = "example.com",
+                securityMode = SecurityMode.PLAIN,
+                port = 5222,
+                resource = "takina",
+            ),
+            passwordProvider = { "wrong-password" },
+            connectorFactory = { fake },
+        )
+
+        val error = assertFailsWith<TakinaConnectionException> { connection.connect() }
+        assertEquals(ConnectionFailureKind.INVALID_CREDENTIALS, error.kind)
+        assertTrue(error.message?.contains("账号或密码错误") == true)
     }
 
     @Test

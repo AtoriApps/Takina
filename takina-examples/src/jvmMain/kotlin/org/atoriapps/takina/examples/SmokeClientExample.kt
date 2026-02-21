@@ -35,6 +35,9 @@ import kotlinx.coroutines.runBlocking
  * - TAKINA_SECURITY=START_TLS | DIRECT_TLS | PLAIN
  * - TAKINA_RESOURCE=takina-smoke (optional)
  * - TAKINA_SMOKE_DURATION_SECONDS=50 (optional)
+ * - TAKINA_SMOKE_SEND_MSG=1 (optional, 测试发消息给人)
+ * - TAKINA_SMOKE_SEND_MSG_TO=bob@example.com (配合 SEND_MSG，指定接受人)
+ * - TAKINA_SMOKE_SEND_MSG_CONTENT=自定义消息内容 (optional)
  * - TAKINA_SMOKE_ROSTER=1 (optional, 测试 roster get)
  * - TAKINA_SMOKE_MAM=1 (optional, 测试 mam query)
  * - TAKINA_SMOKE_PUSH=1 (optional, 测试 push enable/disable)
@@ -56,22 +59,17 @@ fun main() {
     val resource = System.getenv("TAKINA_RESOURCE") ?: "takina-smoke"
     val smokeDurationSeconds = System.getenv("TAKINA_SMOKE_DURATION_SECONDS")?.toIntOrNull() ?: 50
 
+    val smokeSendMsg = System.getenv("TAKINA_SMOKE_SEND_MSG").toBooleanLike()
     val smokeRoster = System.getenv("TAKINA_SMOKE_ROSTER").toBooleanLike()
     val smokeMam = System.getenv("TAKINA_SMOKE_MAM").toBooleanLike()
     val smokePush = System.getenv("TAKINA_SMOKE_PUSH").toBooleanLike()
     val smokeUpload = System.getenv("TAKINA_SMOKE_UPLOAD").toBooleanLike()
 
-    val takina = createTakina(registerAllComponents = false) {
-        registerComponent(DiscoveryComponent)
-        registerComponent(CarbonsComponent)
-        registerComponent(StreamManagementComponent)
-        registerComponent(MessageReceiptsComponent)
-        registerComponent(RosterComponent)
-        registerComponent(MamComponent)
-        registerComponent(MucComponent)
-        registerComponent(CsiPushComponent)
-        registerComponent(HttpUploadComponent)
-        registerComponent(ConnectionDiscoveryComponent)
+    val takina = createTakina {
+        onConfigureComponent(StreamManagementComponent) {
+            autoReconnectMaxAttempts = 8
+            autoReconnectDelayMillis = 2000
+        }
 
         addAccount {
             this.jid = jid
@@ -85,18 +83,25 @@ fun main() {
     takina.events.on(ConnectionClosedEvent) { println("连接关闭：${it.jid} -> ${it.reason}") }
     takina.events.on(StanzaReceivedEvent) { println("入站 ${it.stanzaType}：${it.xml}") }
 
-    takina.connect(jid)
+    takina.connectAll()
 
     takina.request.presence {
-        from = jid
         status = "Proudly using Takina, made in China!"
     }.send()
+
+    if (smokeSendMsg) {
+        val toJid = System.getenv("TAKINA_SMOKE_SEND_MSG_TO") ?: error("启用发消息冒烟时必须提供接收方Jid")
+        takina.request.message {
+            to = toJid.toBareJid()
+            body = System.getenv("TAKINA_SMOKE_SEND_MSG_CONTENT") ?: "本消息由Takina客户端发送"
+        }.send()
+    }
 
     runBlocking {
         val result = takina.discovery.discoInfoAwait(
             from = jid,
             to = createBareJid(domain = jid.domain),
-            timeoutMillis = 8_000,
+            timeoutMillis = 8000,
         ).awaitResult()
         println("disco 结果：type=${result.type} id=${result.id}")
 
@@ -129,7 +134,7 @@ fun main() {
                 contentType = "application/octet-stream",
                 from = jid,
                 to = uploadService,
-                timeoutMillis = 8_000,
+                timeoutMillis = 8000,
             ).awaitResult()
             val slot = takina.httpUpload.parseSlotResult(slotResult.xml)
             println("upload slot 测试：put=${slot?.putUrl ?: "<none>"} get=${slot?.getUrl ?: "<none>"}")
@@ -147,7 +152,9 @@ fun main() {
     }
 
     println("已连接并执行基础冒烟，请等待入站 stanza...($smokeDurationSeconds 秒)")
+
     Thread.sleep(smokeDurationSeconds * 1000L)
+
     takina.disconnect(jid)
 }
 

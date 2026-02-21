@@ -4,7 +4,26 @@ open class TakinaException(message: String, cause: Throwable? = null) : RuntimeE
 
 class JidFormatException(message: String) : TakinaException(message)
 
-class TakinaConnectionException(message: String, cause: Throwable? = null) : TakinaException(message, cause)
+enum class ConnectionFailureKind {
+    INVALID_CREDENTIALS,
+    AUTH_MECHANISM_UNSUPPORTED,
+    STARTTLS_UNSUPPORTED,
+    TLS_NEGOTIATION_FAILED,
+    RESOURCE_BIND_FAILED,
+    NETWORK_TIMEOUT,
+    DNS_RESOLUTION_FAILED,
+    CONNECTION_CLOSED,
+    NETWORK_UNREACHABLE,
+    SERVER_REJECTED,
+    UNKNOWN,
+}
+
+class TakinaConnectionException(
+    message: String,
+    cause: Throwable? = null,
+    val kind: ConnectionFailureKind = ConnectionFailureKind.UNKNOWN,
+    val detail: String? = null,
+) : TakinaException(message, cause)
 
 class AccountNotFoundException(message: String) : TakinaException(message)
 

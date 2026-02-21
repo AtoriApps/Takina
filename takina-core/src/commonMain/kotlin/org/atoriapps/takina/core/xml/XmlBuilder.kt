@@ -34,3 +34,10 @@ fun element(name: String, namespace: String? = null, init: XmlElementBuilder.() 
     builder.init()
     return builder.build()
 }
+
+// 共享逻辑提取
+fun xDataField(varName: String, values: List<String>, fieldType: String? = null): XmlElement {
+    val attrs = linkedMapOf("var" to varName)
+    if (!fieldType.isNullOrBlank()) attrs["type"] = fieldType
+    return XmlElement(name = "field", attributes = attrs, children = values.map { XmlElement(name = "value", text = it) })
+}

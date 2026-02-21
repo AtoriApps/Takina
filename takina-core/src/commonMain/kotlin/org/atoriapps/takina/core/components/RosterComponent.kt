@@ -49,15 +49,18 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
         if (!captureInboundRosterPush || stanzaType != "iq") return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
         val parsed = parseRosterResult(xml) ?: return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
         if (parsed.type != IqType.SET && parsed.type != IqType.RESULT) return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
+        if (parsed.type == IqType.SET && !isAuthorizedRosterPush(connection.boundJid, parsed.from)) {
+            LogUtils.warn(TAG, "收到未授权 roster push，已忽略", connection.boundJid, "from=${parsed.from}")
+            return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
+        }
+
         synchronized(snapshots) {
             val previous = snapshots[connection.boundJid]
-            val merged = if (parsed.version != null || previous == null || parsed.type == IqType.RESULT) {
-                parsed.items.associateBy { it.jid.bareJid }.toMutableMap()
-            } else {
-                previous.items.toMutableMap().apply {
-                    parsed.items.forEach { item ->
-                        if (item.subscription == "remove") remove(item.jid.bareJid) else put(item.jid.bareJid, item)
-                    }
+            val merged = if (previous == null || parsed.type == IqType.RESULT) parsed.items.associateBy { it.jid.bareJid }.toMutableMap()
+            else previous.items.toMutableMap().apply {
+                parsed.items.forEach { item ->
+                    if (item.subscription == "remove") remove(item.jid.bareJid)
+                    else put(item.jid.bareJid, item)
                 }
             }
             snapshots[connection.boundJid] = RosterSnapshot(items = merged, version = parsed.version ?: previous?.version)
@@ -70,9 +73,14 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
         from: Jid? = null,
         to: Jid? = null,
         version: String? = null,
+        requestVersioning: Boolean = false,
         timeoutMillis: Long = 10_000,
     ): PendingIqAwaitRequest {
-        val attrs = if (version.isNullOrBlank()) emptyMap() else mapOf("ver" to version)
+        val attrs = when {
+            !version.isNullOrBlank() -> mapOf("ver" to version)
+            requestVersioning -> mapOf("ver" to "")
+            else -> emptyMap()
+        }
         return PendingIqAwaitRequest(
             takina = takina,
             timeoutMillis = timeoutMillis,
@@ -144,8 +152,14 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
         val queryMatch = ROSTER_QUERY_TAG_REGEX.find(xml) ?: return null
         val queryAttrs = XmlRegexUtils.parseAttributes(queryMatch.groupValues[1])
         if (XmlRegexUtils.extractNamespace(queryAttrs) != ROSTER_NAMESPACE) return null
-        val items = ITEM_TAG_REGEX.findAll(xml).mapNotNull { parseRosterItem(it.groupValues[1]) }.toList()
-        return ParsedRosterResult(type = type, id = root.attributes["id"], version = queryAttrs["ver"], items = items)
+        val items = parseRosterItems(xml, queryMatch.range.last + 1)
+        return ParsedRosterResult(
+            type = type,
+            id = root.attributes["id"],
+            from = root.attributes["from"]?.toJidOrNull(),
+            version = queryAttrs["ver"],
+            items = items,
+        )
     }
 
     fun parseSubscriptionEvent(xml: String): SubscriptionEvent? {
@@ -175,20 +189,43 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
         ),
     )
 
-    private fun parseRosterItem(rawAttributes: String): RosterItem? {
-        val attrs = XmlRegexUtils.parseAttributes(rawAttributes)
+    private fun parseRosterItems(xml: String, fromIndex: Int): List<RosterItem> {
+        val results = mutableListOf<RosterItem>()
+        var searchFrom = fromIndex
+        while (true) {
+            val bounds = XmlRegexUtils.findElementBounds(xml, "item", searchFrom) ?: break
+            val itemXml = xml.substring(bounds)
+            parseRosterItem(itemXml)?.let { results += it }
+            searchFrom = bounds.last + 1
+        }
+        return results
+    }
+
+    private fun parseRosterItem(itemXml: String): RosterItem? {
+        val openTag = ITEM_OPEN_TAG_REGEX.find(itemXml) ?: return null
+        val attrs = XmlRegexUtils.parseAttributes(openTag.groupValues[1])
+        val groups = GROUP_TAG_REGEX.findAll(itemXml).map { it.groupValues[1] }.filter { it.isNotBlank() }.toList()
         val jid = attrs["jid"]?.toJidOrNull() ?: return null
         return RosterItem(
             jid = jid,
             name = attrs["name"],
             subscription = attrs["subscription"],
             ask = attrs["ask"],
+            groups = groups,
         )
+    }
+
+    private fun isAuthorizedRosterPush(selfJid: BareJid, from: Jid?): Boolean {
+        if (from == null) return true
+        if (from.bareJid == selfJid) return true
+        if (from.userName == null && from.domain == selfJid.domain) return true
+        return false
     }
 
     data class ParsedRosterResult(
         val type: IqType,
         val id: String?,
+        val from: Jid?,
         val version: String?,
         val items: List<RosterItem>,
     )
@@ -198,6 +235,7 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
         val name: String?,
         val subscription: String?,
         val ask: String?,
+        val groups: List<String>,
     )
 
     data class RosterSnapshot(
@@ -223,6 +261,7 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
 val TakinaContext.roster: RosterComponent get() = requireComponent(RosterComponent)
 
 private val ROSTER_QUERY_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?query\b([^>]*)/?>""")
-private val ITEM_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?item\b([^>]*)/?>""")
+private val ITEM_OPEN_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?item\b([^>]*)/?>""")
+private val GROUP_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?group\b[^>]*>(.*?)</\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?group\s*>""")
 
 private fun String.toJidOrNull(): Jid? = runCatching { toJid() }.getOrNull()

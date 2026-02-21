@@ -417,6 +417,8 @@ class ComponentsProtocolTest {
         val getXml = roster.rosterGet(from = jid, version = "ver-1").toXml()
         assertTrue(getXml.contains("jabber:iq:roster"))
         assertTrue(getXml.contains("ver='ver-1'"))
+        val getVersioningXml = roster.rosterGet(from = jid, requestVersioning = true).toXml()
+        assertTrue(getVersioningXml.contains("ver=''"))
 
         val setXml = roster.rosterSetItem(jid = "bob@example.com".toBareJid(), name = "Bob", from = jid).toXml()
         assertTrue(setXml.contains("type='set'"))
@@ -431,10 +433,39 @@ class ComponentsProtocolTest {
         assertEquals("v2", rosterResult.version)
         assertEquals(1, rosterResult.items.size)
         assertEquals("both", rosterResult.items.first().subscription)
+        assertEquals(emptyList(), rosterResult.items.first().groups)
 
         val subEvent = roster.parseSubscriptionEvent("<presence from='bob@example.com/phone' to='alice@example.com/takina' type='subscribe'/>")
         assertNotNull(subEvent)
         assertEquals(RosterComponent.SubscriptionAction.REQUEST, subEvent.action)
+
+        val connection = TakinaConnection(config = ConnectionConfig(jid = jid), passwordProvider = { "password" })
+        roster.interceptInboundStanza(
+            connection = connection,
+            stanzaType = "iq",
+            xml = "<iq type='result' id='r2'><query xmlns='jabber:iq:roster' ver='v3'><item jid='bob@example.com' name='Bob' subscription='both'><group>Friends</group></item></query></iq>",
+            context = takina,
+        )
+        roster.interceptInboundStanza(
+            connection = connection,
+            stanzaType = "iq",
+            xml = "<iq from='mallory@evil.com' type='set' id='rp1'><query xmlns='jabber:iq:roster' ver='v4'><item jid='mallory@evil.com' name='Mallory' subscription='both'/></query></iq>",
+            context = takina,
+        )
+        val snapshotAfterUnauthorized = roster.snapshot(jid)
+        assertNotNull(snapshotAfterUnauthorized)
+        assertEquals(1, snapshotAfterUnauthorized.items.size)
+        assertEquals(listOf("Friends"), snapshotAfterUnauthorized.items.values.first().groups)
+
+        roster.interceptInboundStanza(
+            connection = connection,
+            stanzaType = "iq",
+            xml = "<iq from='alice@example.com' type='set' id='rp2'><query xmlns='jabber:iq:roster' ver='v5'><item jid='bob@example.com' subscription='remove'/></query></iq>",
+            context = takina,
+        )
+        val snapshotAfterRemove = roster.snapshot(jid)
+        assertNotNull(snapshotAfterRemove)
+        assertEquals(0, snapshotAfterRemove.items.size)
     }
 
     @Test
@@ -482,6 +513,20 @@ class ComponentsProtocolTest {
         assertNotNull(fin)
         assertTrue(fin.complete)
         assertEquals(25, fin.rsm?.count)
+        assertEquals("l1", mam.nextPageAfter(fin))
+        assertEquals("f1", mam.nextPageBefore(fin))
+
+        val finNoSet = mam.parseFin("<iq type='result' id='mam-fin-2'><fin xmlns='urn:xmpp:mam:2' complete='false' stable='true' queryid='q1'/></iq>")
+        assertNotNull(finNoSet)
+        assertEquals(null, finNoSet.rsm)
+
+        val aggregator = mam.createAggregator(queryId = "q1")
+        assertTrue(aggregator.ingest(message))
+        assertTrue(aggregator.ingest("<iq type='result' id='mam-fin'><fin xmlns='urn:xmpp:mam:2' complete='true' stable='true' queryid='q1'><set xmlns='http://jabber.org/protocol/rsm'><first>f1</first><last>l2</last><count>26</count></set></fin></iq>"))
+        val aggregated = aggregator.snapshot()
+        assertEquals(1, aggregated.results.size)
+        assertTrue(aggregated.isComplete)
+        assertEquals("l2", aggregated.nextPageAfter)
     }
 
     @Test
@@ -521,10 +566,17 @@ class ComponentsProtocolTest {
         assertTrue(bookmarksXml.contains("urn:xmpp:bookmarks:1"))
         assertTrue(bookmarksXml.contains("<item id='room@conference.example.com'>"))
         assertFalse(bookmarksXml.contains("conference jid='"))
+        assertTrue(bookmarksXml.contains("publish-options"))
+        assertTrue(bookmarksXml.contains("pubsub#persist_items"))
 
-        val parsedBookmarks = muc.parseBookmarks2Result("<iq type='result'><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='urn:xmpp:bookmarks:1'><item id='room@conference.example.com'><conference xmlns='urn:xmpp:bookmarks:1' name='工作群' autojoin='true'/></item></items></pubsub></iq>")
+        val parsedBookmarks = muc.parseBookmarks2Result("<iq type='result'><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='urn:xmpp:bookmarks:1'><item id='room@conference.example.com'><conference xmlns='urn:xmpp:bookmarks:1' name='工作群' autojoin='true'><nick>alice</nick></conference></item></items></pubsub></iq>")
         assertEquals(1, parsedBookmarks.size)
         assertEquals("room@conference.example.com", parsedBookmarks.first().jid.toString())
+        assertEquals("alice", parsedBookmarks.first().nick)
+
+        val retractXml = muc.retractBookmarkAwait(roomJid = "room@conference.example.com".toBareJid(), from = jid).toXml()
+        assertTrue(retractXml.contains("<retract node='urn:xmpp:bookmarks:1' notify='true'>"))
+        assertTrue(retractXml.contains("<item id='room@conference.example.com'/>"))
     }
 
     @Test
@@ -583,6 +635,17 @@ class ComponentsProtocolTest {
         assertEquals("https://upload.example.com/get", slot.getUrl)
         assertEquals("Bearer token", slot.putHeaders["Authorization"])
         assertEquals(1, slot.putHeadersOrdered.size)
+
+        val insecureSlot = upload.parseSlotResult("<iq type='result' id='slot-2'><slot xmlns='urn:xmpp:http:upload:0'><put url='http://upload.example.com/put'/><get url='http://upload.example.com/get'/></slot></iq>")
+        assertEquals(null, insecureSlot)
+        upload.allowInsecureHttpSlotUrls = true
+        assertNotNull(upload.parseSlotResult("<iq type='result' id='slot-2'><slot xmlns='urn:xmpp:http:upload:0'><put url='http://upload.example.com/put'/><get url='http://upload.example.com/get'/></slot></iq>"))
+
+        val uploadError = upload.parseUploadError("<iq type='error' id='slot-3'><error type='modify'><not-acceptable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/><text xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'>too large</text><file-too-large xmlns='urn:xmpp:http:upload:0'><max-file-size>4096</max-file-size></file-too-large></error></iq>")
+        assertNotNull(uploadError)
+        assertEquals("not-acceptable", uploadError.condition)
+        assertEquals(4096L, uploadError.maxFileSize)
+        assertFalse(uploadError.retryable)
     }
 
     @Test
@@ -611,6 +674,8 @@ class ComponentsProtocolTest {
 
         val jsonEndpoints = discovery.parseHostMetaJsonLinks("""{"links":[{"rel":"urn:xmpp:alt-connections:websocket","href":"wss://xmpp.example.com/ws"},{"rel":"urn:xmpp:alt-connections:xbosh","href":"http://xmpp.example.com/http-bind"}]}""")
         assertEquals(1, jsonEndpoints.size)
+        assertEquals(ConnectionDiscoveryComponent.EndpointType.WEBSOCKET, discovery.choosePreferredEndpoint(endpoints)?.type)
+        assertEquals(ConnectionDiscoveryComponent.EndpointType.BOSH, discovery.choosePreferredEndpoint(endpoints = endpoints, preferWebSocket = false)?.type)
     }
 
     private class InMemorySmStore : StreamManagementComponent.StreamManagementStateStore {

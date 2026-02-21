@@ -72,6 +72,20 @@ class ConnectionDiscoveryComponent internal constructor(private val takina: Abst
         }.toList()
     }
 
+    fun choosePreferredEndpoint(
+        endpoints: List<AlternativeEndpoint>,
+        preferWebSocket: Boolean = true,
+        allowBoshFallback: Boolean = true,
+    ): AlternativeEndpoint? {
+        if (endpoints.isEmpty()) return null
+        val websockets = endpoints.filter { it.type == EndpointType.WEBSOCKET }
+        val bosh = endpoints.filter { it.type == EndpointType.BOSH }
+        if (preferWebSocket && websockets.isNotEmpty()) return websockets.first()
+        if (allowBoshFallback && bosh.isNotEmpty()) return bosh.first()
+        if (!preferWebSocket && bosh.isNotEmpty()) return bosh.first()
+        return websockets.firstOrNull() ?: bosh.firstOrNull()
+    }
+
     data class ConnectionDiscoveryResult(
         val supportsDirectTls: Boolean,
         val supportsWebSocket: Boolean,

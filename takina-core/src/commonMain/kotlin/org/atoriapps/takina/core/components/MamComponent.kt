@@ -7,6 +7,7 @@ import org.atoriapps.takina.core.utils.IdUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlRegexUtils
+import org.atoriapps.takina.core.xml.xDataField
 import org.atoriapps.takina.core.xmpp.Jid
 import org.atoriapps.takina.core.xmpp.bareJid
 import org.atoriapps.takina.core.xmpp.toJid
@@ -42,16 +43,12 @@ class MamComponent internal constructor(private val takina: AbstractTakina) : Ta
     ): PendingIqAwaitRequest {
         require(pageMax == null || pageMax > 0) { "pageMax 必须大于 0" }
 
-        val fields = mutableListOf(
-            xDataField(varName = "FORM_TYPE", values = listOf(MAM2_NAMESPACE), fieldType = "hidden"),
-        )
+        val fields = mutableListOf(xDataField(varName = "FORM_TYPE", values = listOf(MAM2_NAMESPACE), fieldType = "hidden"))
         if (with != null) fields += xDataField(varName = "with", values = listOf(with.bareJid.toString()))
         if (!startIso8601.isNullOrBlank()) fields += xDataField(varName = "start", values = listOf(startIso8601))
         if (!endIso8601.isNullOrBlank()) fields += xDataField(varName = "end", values = listOf(endIso8601))
 
-        val queryChildren = mutableListOf<XmlElement>(
-            XmlElement(name = "x", namespace = "jabber:x:data", attributes = mapOf("type" to "submit"), children = fields),
-        )
+        val queryChildren = mutableListOf(XmlElement(name = "x", namespace = "jabber:x:data", attributes = mapOf("type" to "submit"), children = fields),)
 
         val rsm = buildRsmSet(after = pageAfter, before = pageBefore, max = pageMax)
         if (rsm != null) queryChildren += rsm
@@ -81,6 +78,10 @@ class MamComponent internal constructor(private val takina: AbstractTakina) : Ta
 
         val forwardedBounds = XmlRegexUtils.findElementBounds(xml, "forwarded", resultMatch.range.last + 1) ?: return null
         val forwardedXml = xml.substring(forwardedBounds)
+        val forwardedOpenTag = FORWARDED_OPEN_TAG_REGEX.find(forwardedXml) ?: return null
+        val forwardedAttrs = XmlRegexUtils.parseAttributes(forwardedOpenTag.groupValues[1])
+        if (XmlRegexUtils.extractNamespace(forwardedAttrs) != FORWARDED_NAMESPACE) return null
+
         val delayStamp = DELAY_TAG_REGEX.find(forwardedXml)?.let { XmlRegexUtils.parseAttributes(it.groupValues[1])["stamp"] }
         val messageBounds = XmlRegexUtils.findElementBounds(forwardedXml, "message") ?: return null
         val forwardedMessageXml = forwardedXml.substring(messageBounds)
@@ -104,8 +105,7 @@ class MamComponent internal constructor(private val takina: AbstractTakina) : Ta
         val finAttrs = XmlRegexUtils.parseAttributes(finMatch.groupValues[1])
         if (XmlRegexUtils.extractNamespace(finAttrs) != MAM2_NAMESPACE) return null
 
-        val rsmSetBounds = XmlRegexUtils.findElementBounds(xml, "set", finMatch.range.last + 1) ?: return null
-        val rsm = parseRsmSet(xml.substring(rsmSetBounds)) ?: return null
+        val rsm = XmlRegexUtils.findElementBounds(xml, "set", finMatch.range.last + 1)?.let { parseRsmSet(xml.substring(it)) }
 
         return MamFin(
             queryId = finAttrs["queryid"],
@@ -123,15 +123,11 @@ class MamComponent internal constructor(private val takina: AbstractTakina) : Ta
         StanzaId(id = id, by = by)
     }.toList()
 
-    private fun xDataField(varName: String, values: List<String>, fieldType: String? = null): XmlElement {
-        val attrs = linkedMapOf("var" to varName)
-        if (!fieldType.isNullOrBlank()) attrs["type"] = fieldType
-        return XmlElement(
-            name = "field",
-            attributes = attrs,
-            children = values.map { XmlElement(name = "value", text = it) },
-        )
-    }
+    fun createAggregator(queryId: String? = null): MamResultAggregator = MamResultAggregator(queryId)
+
+    fun nextPageAfter(fin: MamFin?): String? = fin?.rsm?.last
+
+    fun nextPageBefore(fin: MamFin?): String? = fin?.rsm?.first
 
     private fun buildRsmSet(after: String?, before: String?, max: Int?): XmlElement? {
         if (after.isNullOrBlank() && before.isNullOrBlank() && max == null) return null
@@ -152,12 +148,52 @@ class MamComponent internal constructor(private val takina: AbstractTakina) : Ta
         return RsmSet(first = first, last = last, count = count)
     }
 
+    inner class MamResultAggregator(private val queryId: String?) {
+        private val envelopes = mutableListOf<MamResultEnvelope>()
+        private var fin: MamFin? = null
+
+        fun ingest(xml: String): Boolean {
+            val result = parseResultEnvelope(xml)
+            if (result != null) {
+                if (queryId == null || result.queryId == queryId) envelopes += result
+                return true
+            }
+            val parsedFin = parseFin(xml)
+            if (parsedFin != null) {
+                if (queryId == null || parsedFin.queryId == queryId) fin = parsedFin
+                return true
+            }
+            return false
+        }
+
+        fun snapshot(): AggregatedMamResult = AggregatedMamResult(
+            results = envelopes.toList(),
+            fin = fin,
+            nextPageAfter = nextPageAfter(fin),
+            nextPageBefore = nextPageBefore(fin),
+            isComplete = fin?.complete ?: false,
+        )
+
+        fun clear() {
+            envelopes.clear()
+            fin = null
+        }
+    }
+
     data class MamResultEnvelope(
         val queryId: String?,
         val resultId: String?,
         val delayStamp: String?,
         val forwardedMessageXml: String,
         val stanzaIds: List<StanzaId>,
+    )
+
+    data class AggregatedMamResult(
+        val results: List<MamResultEnvelope>,
+        val fin: MamFin?,
+        val nextPageAfter: String?,
+        val nextPageBefore: String?,
+        val isComplete: Boolean,
     )
 
     data class StanzaId(
@@ -182,6 +218,7 @@ class MamComponent internal constructor(private val takina: AbstractTakina) : Ta
 val TakinaContext.mam: MamComponent get() = requireComponent(MamComponent)
 
 private val RESULT_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?result\b([^>]*)>""")
+private val FORWARDED_OPEN_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?forwarded\b([^>]*)>""")
 private val DELAY_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?delay\b([^>]*)/?>""")
 private val FIN_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?fin\b([^>]*)>""")
 private val SET_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?set\b([^>]*)>""")

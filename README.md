@@ -50,12 +50,12 @@ Takina 的功能以组件形式组织，避免逻辑耦合、便于扩展与裁�
 * `CarbonsComponent`：XEP-0280 Carbons 启用/关闭与转发消息解析。
 * `MessageReceiptsComponent`：XEP-0184 回执请求/回执确认载荷构造、消息解析与自动回执策略。
 * `StreamManagementComponent`：XEP-0198 基础模型（enable/resume/a/r 构造、帧解析、计数状态跟踪、自动确认请求与重连恢复基础流程）。
-* `RosterComponent`：RFC 6121 roster 拉取/增删改与订阅流程（subscribe/subscribed/unsubscribe/unsubscribed）封装。
-* `MamComponent`：XEP-0313 + XEP-0059 查询构造、分页参数、MAM result/fin 与 stanza-id 解析。
-* `MucComponent`：XEP-0045 进房/离房/群消息，XEP-0249 直接邀请，XEP-0402 Bookmarks 2 请求封装。
+* `RosterComponent`：RFC 6121 roster 拉取/增删改、group 解析、订阅流程与 push 来源校验。
+* `MamComponent`：XEP-0313 + XEP-0059 查询构造、分页参数、MAM result/fin 解析、聚合器与游标辅助。
+* `MucComponent`：XEP-0045 进房/离房/群消息，XEP-0249 直接邀请，XEP-0402 Bookmarks 2 发布/读取/retract 与 publish-options 封装。
 * `CsiPushComponent`：XEP-0352 active/inactive + XEP-0357 push enable/disable 与能力发现解析。
-* `HttpUploadComponent`：XEP-0363 slot 申请与 put/get URL 解析。
-* `ConnectionDiscoveryComponent`：XEP-0156 host-meta 备用连接解析 + 直连 TLS/WebSocket/BOSH 特性检测。
+* `HttpUploadComponent`：XEP-0363 slot 申请、put/get URL 解析与上传错误/max-file-size 解析。
+* `ConnectionDiscoveryComponent`：XEP-0156 host-meta XML/JSON 备用连接解析 + 首选端点选择。
 
 ## 功能特性
 

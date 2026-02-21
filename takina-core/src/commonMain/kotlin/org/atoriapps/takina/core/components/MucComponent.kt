@@ -9,6 +9,7 @@ import org.atoriapps.takina.core.utils.IdUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlRegexUtils
+import org.atoriapps.takina.core.xml.xDataField
 import org.atoriapps.takina.core.xmpp.Jid
 import org.atoriapps.takina.core.xmpp.bareJid
 import org.atoriapps.takina.core.xmpp.toJid
@@ -114,6 +115,8 @@ class MucComponent internal constructor(private val takina: AbstractTakina) : Ta
         bookmarks: List<BookmarkRoom>,
         from: Jid? = null,
         to: Jid? = null,
+        includePublishOptions: Boolean = true,
+        publishOptionsAccessModel: String = "whitelist",
         timeoutMillis: Long = 10_000,
     ): PendingIqAwaitRequest {
         val publishItems = bookmarks.map { bookmark ->
@@ -136,12 +139,40 @@ class MucComponent internal constructor(private val takina: AbstractTakina) : Ta
         }
 
         val publish = XmlElement(name = "publish", attributes = mapOf("node" to BOOKMARKS2_NAMESPACE), children = publishItems)
-        val pubsub = XmlElement(name = "pubsub", namespace = PUBSUB_NAMESPACE, children = listOf(publish))
+        val pubsubChildren = mutableListOf<XmlElement>(publish)
+        if (includePublishOptions) pubsubChildren += buildBookmarksPublishOptions(bookmarks.size, publishOptionsAccessModel)
+        val pubsub = XmlElement(name = "pubsub", namespace = PUBSUB_NAMESPACE, children = pubsubChildren)
         return PendingIqAwaitRequest(
             takina = takina,
             timeoutMillis = timeoutMillis,
             stanza = IqStanza(
                 id = IdUtils.newStanzaId("bookmark-set"),
+                from = from,
+                to = to,
+                type = IqType.SET,
+                payload = pubsub,
+            ),
+        )
+    }
+
+    fun retractBookmarkAwait(
+        roomJid: Jid,
+        from: Jid? = null,
+        to: Jid? = null,
+        notify: Boolean = true,
+        timeoutMillis: Long = 10_000,
+    ): PendingIqAwaitRequest {
+        val retract = XmlElement(
+            name = "retract",
+            attributes = mapOf("node" to BOOKMARKS2_NAMESPACE, "notify" to if (notify) "true" else "false"),
+            children = listOf(XmlElement(name = "item", attributes = mapOf("id" to roomJid.bareJid.toString()))),
+        )
+        val pubsub = XmlElement(name = "pubsub", namespace = PUBSUB_NAMESPACE, children = listOf(retract))
+        return PendingIqAwaitRequest(
+            takina = takina,
+            timeoutMillis = timeoutMillis,
+            stanza = IqStanza(
+                id = IdUtils.newStanzaId("bookmark-retract"),
                 from = from,
                 to = to,
                 type = IqType.SET,
@@ -177,28 +208,47 @@ class MucComponent internal constructor(private val takina: AbstractTakina) : Ta
         val attrs = XmlRegexUtils.parseAttributes(xTag.groupValues[1])
         if (XmlRegexUtils.extractNamespace(attrs) != CONFERENCE_NAMESPACE) return null
         val room = attrs["jid"] ?: return null
-        return DirectInvite(
-            roomJid = room,
-            reason = attrs["reason"],
-            continueThread = attrs["continue"].toBoolean(),
-        )
+        return DirectInvite(roomJid = room, reason = attrs["reason"], continueThread = attrs["continue"].toBoolean())
     }
 
     fun parseBookmarks2Result(xml: String): List<BookmarkRoom> {
         val results = mutableListOf<BookmarkRoom>()
-        BOOKMARK_ITEM_WITH_CONFERENCE_REGEX.findAll(xml).forEach { match ->
-            val itemAttrs = XmlRegexUtils.parseAttributes(match.groupValues[1])
-            val conferenceAttrs = XmlRegexUtils.parseAttributes(match.groupValues[2])
-            if (XmlRegexUtils.extractNamespace(conferenceAttrs) != BOOKMARKS2_NAMESPACE) return@forEach
-            val jid = itemAttrs["id"] ?: return@forEach
-            results += BookmarkRoom(
-                jid = jid.toJid(),
-                name = conferenceAttrs["name"] ?: jid,
-                autoJoin = conferenceAttrs["autojoin"].toBooleanLike(),
-                nick = null,
-            )
+        var index = 0
+        while (true) {
+            val itemBounds = XmlRegexUtils.findElementBounds(xml, "item", index) ?: break
+            val itemXml = xml.substring(itemBounds)
+            val itemOpen = ITEM_OPEN_TAG_REGEX.find(itemXml)
+            val itemAttrs = itemOpen?.let { XmlRegexUtils.parseAttributes(it.groupValues[1]) } ?: emptyMap()
+            val jidRaw = itemAttrs["id"]
+            val conferenceOpen = CONFERENCE_OPEN_TAG_REGEX.find(itemXml)
+            val conferenceAttrs = conferenceOpen?.let { XmlRegexUtils.parseAttributes(it.groupValues[1]) } ?: emptyMap()
+            if (jidRaw != null && XmlRegexUtils.extractNamespace(conferenceAttrs) == BOOKMARKS2_NAMESPACE) {
+                val nick = NICK_TAG_REGEX.find(itemXml)?.groupValues?.get(1)
+                results += BookmarkRoom(
+                    jid = jidRaw.toJid(),
+                    name = conferenceAttrs["name"] ?: jidRaw,
+                    autoJoin = conferenceAttrs["autojoin"].toBooleanLike(),
+                    nick = nick,
+                )
+            }
+            index = itemBounds.last + 1
         }
         return results
+    }
+
+    private fun buildBookmarksPublishOptions(count: Int, accessModel: String): XmlElement {
+        val x = XmlElement(
+            name = "x",
+            namespace = "jabber:x:data",
+            attributes = mapOf("type" to "submit"),
+            children = listOf(
+                xDataField("FORM_TYPE", listOf("http://jabber.org/protocol/pubsub#publish-options"), "hidden"),
+                xDataField("pubsub#persist_items", listOf("true")),
+                xDataField("pubsub#max_items", listOf((if (count <= 0) 1 else count).toString())),
+                xDataField("pubsub#access_model", listOf(accessModel)),
+            ),
+        )
+        return XmlElement(name = "publish-options", children = listOf(x))
     }
 
     data class BookmarkRoom(
@@ -218,8 +268,8 @@ class MucComponent internal constructor(private val takina: AbstractTakina) : Ta
 val TakinaContext.muc: MucComponent get() = requireComponent(MucComponent)
 
 private val X_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?x\b([^>]*)/?>""")
-private val BOOKMARK_ITEM_WITH_CONFERENCE_REGEX = Regex(
-    """<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?item\b([^>]*)>\s*<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?conference\b([^>]*)""",
-)
+private val ITEM_OPEN_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?item\b([^>]*)/?>""")
+private val CONFERENCE_OPEN_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?conference\b([^>]*)/?>""")
+private val NICK_TAG_REGEX = Regex("""<\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?nick\b[^>]*>(.*?)</\s*(?:[A-Za-z_:][A-Za-z0-9_.:-]*:)?nick\s*>""")
 
 private fun String?.toBooleanLike(): Boolean = this != null && (equals("true", ignoreCase = true) || this == "1")

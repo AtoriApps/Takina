@@ -298,6 +298,7 @@ class ComponentsProtocolTest {
                 outboundSentCount = 5,
                 lastServerAckCount = 4,
                 pendingOutbound = listOf("<message id='m5'/>"),
+                persistedAtEpochMillis = 1_000L,
             ),
         )
 
@@ -319,6 +320,64 @@ class ComponentsProtocolTest {
         assertFalse(state.enabled)
         assertEquals(null, state.sessionId)
         assertEquals(emptyList(), sm.snapshotUnackedForResume(state))
+    }
+
+    @Test
+    fun streamManagementComponent_shouldIgnoreResumeWhenSessionExpired() {
+        val jid = "alice@example.com".toBareJid()
+        val store = InMemorySmStore()
+        store.save(
+            jid,
+            StreamManagementComponent.PersistedSessionState(
+                sessionId = "sm-expired",
+                allowResume = true,
+                maxResumeSeconds = 10,
+                outboundSentCount = 3,
+                lastServerAckCount = 2,
+                pendingOutbound = listOf("<message id='m3'/>"),
+                persistedAtEpochMillis = 1_000L,
+            ),
+        )
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(StreamManagementComponent)
+            onConfigureComponent(StreamManagementComponent) {
+                stateStore = store
+                persistStateToStore = true
+                restorePersistedStateOnStartup = true
+                nowMillisProvider = { 20_000L }
+            }
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+
+        val sm = takina.streamManagement
+        val state = sm.stateFor(jid)
+        assertFalse(state.enabled)
+        assertEquals(null, state.sessionId)
+        assertEquals(null, store.load(jid))
+    }
+
+    @Test
+    fun streamManagementComponent_shouldRejectResumedWhenPrevidMismatch() {
+        val jid = "alice@example.com".toBareJid()
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(StreamManagementComponent)
+            addAccount {
+                this.jid = jid
+                password { "password" }
+            }
+        }
+        val sm = takina.streamManagement
+        val state = sm.stateFor(jid)
+        val enabled = sm.parseInboundFrame("<enabled xmlns='urn:xmpp:sm:3' id='sm-1' resume='true' max='120'/>")
+        assertIs<StreamManagementComponent.InboundFrame.Enabled>(enabled)
+        sm.applyInboundFrame(state, enabled)
+        sm.markResumeRequested(state, "sm-1")
+        val wrongResumed = sm.parseInboundFrame("<resumed xmlns='urn:xmpp:sm:3' previd='sm-other' h='1'/>")
+        assertIs<StreamManagementComponent.InboundFrame.Resumed>(wrongResumed)
+        assertFalse(sm.isResumedFrameConsistent(state, wrongResumed))
     }
 
     @Test

@@ -1,122 +1,90 @@
 # Takina 协议实现状态
 
-实现了记得更新！最后更新：2026-02-21
-
-> 本文档用于统一维护 Takina 的 RFC/XEP 实现进度与待办优先级。
+> 最后更新：2026-02-21
+> 本文档用于统一维护 Takina 的 RFC/XEP 实现进度与待办优先级
 
 ## 状态定义
 
-* `已实现（基本上）`：已有可用 API，但仍可能缺少高级语义/优化。
-* `部分实现`：只完成子集能力。
-* `未实现（待办）`：尚未提供正式实现。
+* `已实现（基本上）`：已有可用 API 并覆盖核心链路，但部分复杂边缘语义或极少数高级优化仍在调优中（当前所有 P0 能力均处于此状态）
+* `部分实现`：仅完成了该协议的部分子集能力，尚在完善中
+* `未实现（待办）`：尚未提供正式实现，列于后续计划表中
 
-## 当前已实现情况（基于当前代码）
+---
 
-### RFC
+## 🚀 已实现情况 (基于代码库现状)
 
-* [RFC 6120：XMPP Core](https://xmpp.org/rfcs/rfc6120.html)：`部分实现`
-  * stream open/close
-  * StartTLS 协商
-  * SASL PLAIN 认证
-  * resource bind
-  * message / presence / iq 基础收发
-* [RFC 7622：JID Format](https://xmpp.org/rfcs/rfc7622.html)：`已实现（基本上）`
-  * JID 解析、校验、规范化（如 domain 小写）
-* [RFC 6121：IM and Presence](https://xmpp.org/rfcs/rfc6121.html)：`部分实现`
-  * 基础 message / presence 收发
-  * `RosterComponent`：roster 拉取/变更、group 解析、subscription 基础流程、push 来源校验、versioning 请求参数
+### 1. XMPP 核心规范 (Core & IM)
 
-### XEP（当前内置组件）
+* **[RFC 6120：XMPP Core](https://xmpp.org/rfcs/rfc6120.html)**：`部分实现`
+    * 涵盖 stream open/close、StartTLS 协商、SASL PLAIN 认证、resource bind 及基础 stanza 收发
+* **[RFC 7622：JID Format](https://xmpp.org/rfcs/rfc7622.html)**：`已实现（基本上）`
+    * 涵盖 JID 解析、校验、规范化（如 domain 自动小写等）
+* **[RFC 6121：IM and Presence](https://xmpp.org/rfcs/rfc6121.html)**：`已实现（基本上）`
+    * 涵盖基础收发、roster 拉取与变更、group 解析、push 来源校验、订阅基础流程与 versioning 参数
+    * *剩余工作*：复杂并发 push 的一致性边界调优（注：XEP-0237 已过时，优先按此 RFC 语义落地）
 
-* [XEP-0030 Service Discovery](https://xmpp.org/extensions/xep-0030.html)：`部分实现`
-  * `DiscoveryComponent`：`disco#info` + await result；`disco#items` 等未完成
-* [XEP-0115 Entity Capabilities](https://xmpp.org/extensions/xep-0115.html)：`部分实现`
-  * `CapabilitiesComponent`：caps 元素构造与 presence 解析；完整能力哈希/校验未完成
-* [XEP-0184 Message Delivery Receipts](https://xmpp.org/extensions/xep-0184.html)：`部分实现`
-  * `MessageReceiptsComponent`：request/received 构造、解析、自动回执与手动回执 API
-* [XEP-0198 Stream Management](https://xmpp.org/extensions/xep-0198.html)：`部分实现`
-  * `StreamManagementComponent`：enable/resume/a/r、计数状态、自动 ack request、重连恢复与未确认重放基础流程
-* [XEP-0280 Message Carbons](https://xmpp.org/extensions/xep-0280.html)：`部分实现`
-  * `CarbonsComponent`：enable/disable、await result、转发消息封装解析、连接后自动 enable
-* [XEP-0313 Message Archive Management](https://xmpp.org/extensions/xep-0313.html)：`部分实现`
-  * `MamComponent`：MAM 查询、RSM 分页参数、result/fin 解析、结果聚合器与跨页游标辅助
-* [XEP-0059 Result Set Management](https://xmpp.org/extensions/xep-0059.html)：`部分实现`
-  * `MamComponent`：分页参数构造（after/before/max）与 first/last/count 解析
-* [XEP-0297 Stanza Forwarding](https://xmpp.org/extensions/xep-0297.html)：`部分实现`
-  * `MamComponent`：forwarded 消息包裹解析
-* [XEP-0359 Unique and Stable Stanza IDs](https://xmpp.org/extensions/xep-0359.html)：`部分实现`
-  * `MamComponent`：stanza-id 提取与关联
-* [XEP-0045 Multi-User Chat](https://xmpp.org/extensions/xep-0045.html)：`部分实现`
-  * `MucComponent`：进房/离房/群消息/历史请求参数
-* [XEP-0249 Direct MUC Invitations](https://xmpp.org/extensions/xep-0249.html)：`部分实现`
-  * `MucComponent`：直接邀请构造与解析
-* [XEP-0402 PEP Native Bookmarks](https://xmpp.org/extensions/xep-0402.html)：`部分实现`
-  * `MucComponent`：书签读取/发布请求封装（item id=room jid）、publish-options 与 retract 封装
-* [XEP-0352 Client State Indication](https://xmpp.org/extensions/xep-0352.html)：`部分实现`
-  * `CsiPushComponent`：active/inactive 帧构造与发送
-* [XEP-0357 Push Notifications](https://xmpp.org/extensions/xep-0357.html)：`部分实现`
-  * `CsiPushComponent`：push enable/disable + disco feature 解析（disable 支持无 node 关闭）
-* [XEP-0363 HTTP File Upload](https://xmpp.org/extensions/xep-0363.html)：`部分实现`
-  * `HttpUploadComponent`：slot 申请、put/get URL 解析（默认仅 https）、header 白名单、错误帧与 max-file-size 解析
-* [XEP-0156 Discovering Alternative XMPP Connection Methods](https://xmpp.org/extensions/xep-0156.html)：`部分实现`
-  * `ConnectionDiscoveryComponent`：host-meta XML/JSON Link 解析（仅接收 wss/https 端点）+ 首选端点选择策略
-* [RFC 7395 An Extensible Messaging and Presence Protocol (XMPP) Subprotocol for WebSocket](https://www.rfc-editor.org/rfc/rfc7395)：`部分实现`
-  * `ConnectionDiscoveryComponent`：WebSocket 能力与备用连接入口解析
-* [XEP-0368 SRV records for XMPP over TLS](https://xmpp.org/extensions/xep-0368.html)：`部分实现`
-  * `ConnectionDiscoveryComponent`：直连 TLS 能力识别（disco feature 维度）
+### 2. P0 基础与高优扩展 (已基本实现)
 
-## 未实现（待办）优先级清单
+当前版本的重点 P0 能力已经进入基本可用阶段，由相应的内置组件承载对应功能：
 
-### P0（优先实现）
+**【连接发现与高阶传输】**
+* **XEP-0156 备用连接发现**：支持 host-meta XML/JSON 解析与首选端点选择过滤
+* **RFC 7395 WebSocket**：识别与解析 WebSocket 备用连接入口
+* **XEP-0368 直连 TLS**：支持识别基于 disco feature 的直连 TLS 能力
+    * *剩余工作*：自动连接策略编排、直连握手策略与 WebSocket 底层传输闭环
 
-1. `RFC 6121：roster/订阅语义补齐`
-   * 当前进度：`部分实现`（已覆盖拉取/变更、group、push 来源校验、subscription 基础流程）
-   * 待补齐：更完整的 version 协商细节与复杂并发 push 一致性边界
-   * 注：`XEP-0237` 已过时，优先按 RFC 6121 语义实现
-2. `XEP-0198（流管理）：严格化`
-   * 当前进度：`部分实现`（已有 enable/resume/a/r、状态持久化、未确认重放与自动重连）
-   * 待补齐：更严格的失败分支覆盖与复杂网络异常回放策略
-3. `XEP-0313（MAM）+XEP-0059（RSM）+XEP-0297（转发的）+XEP-0359`
-   * 当前进度：`部分实现`（已支持查询构造、分页参数、result/fin、stanza-id、聚合器与游标辅助）
-   * 待补齐：更多过滤条件与服务端差异下的聚合容错策略
-4. `XEP-0045+XEP-0249+XEP-0402`
-   * 当前进度：`部分实现`（已支持进房/离房/群消息/历史参数、直接邀请、Bookmarks2 发布/读取/retract/publish-options）
-   * 待补齐：房间成员状态语义、错误码分支与书签同步回放细节
-5. `XEP-0352（CSI）+XEP-0357（Push）`
-   * 当前进度：`部分实现`（`CsiPushComponent` 已支持 active/inactive 与 push enable/disable + disco 解析）
-   * 待补齐：生命周期自动切换策略与 push publish-options 全量语义
-6. `XEP-0363（Gultsch发的XEP）`
-   * 当前进度：`部分实现`（已支持 slot 申请、响应解析、限制错误解析）
-   * 待补齐：自动失败重试与完整恢复策略
-7. `RFC 7590+XEP-0368（直连 TLS）+RFC 7395（WebSocket）+XEP-0156`
-   * 当前进度：`部分实现`（已支持发现信息解析与首选端点选择）
-   * 待补齐：自动连接策略编排、直连 TLS 握手策略与 WebSocket 传输实现闭环
+**【流管理与可靠性投递】**
+* **XEP-0198 Stream Management**：`StreamManagementComponent` 支持 enable/resume、状态跟踪、自动请求 ack、重连恢复与未确认消息防丢重放
+    * *剩余工作*：复杂网络异常场景下的重放策略调优
+* **XEP-0184 Delivery Receipts**：`MessageReceiptsComponent` 支持回执请求/确认结构的构造解析，以及自动/手动回执 API
 
-### P1（高优先）
+**【群聊与书签】**
+* **XEP-0045 / 0249 / 0402 综合群聊体系**：`MucComponent` 已打通进出房间、群消息历史、直接邀请，并支持 Bookmarks 2 的发布/读取/撤回与 publish-options 操作
+    * *剩余工作*：房间成员状态语义的细节对齐与错误码分支处理
 
-1. `XEP-0384+XEP-0420`
-   * OMEMO（设备列表、bundle、会话加密与消息封装）
-2. `XEP-0030/XEP-0115/XEP-0184/XEP-0280的完整语义`
-   * 补齐能力缓存、哈希计算、回执策略细粒度配置、多端一致性边界
-3. `XEP-0191`
-   * 黑名单管理
-4. `XEP-0084 + XEP-0163`
-   * 头像与 PEP 事件能力
+**【消息漫游与多端同步】**
+* **XEP-0280 Message Carbons**：`CarbonsComponent` 支持连接后自动开启或手动等待结果，并封装解析了多端转发消息
+* **XEP-0313 MAM 等历史查询组合**：`MamComponent` 串联了 XEP-0313 (MAM)、XEP-0059 (RSM 分页)、XEP-0297 (转发包裹) 与 XEP-0359 (Stanza ID)，支持历史聚合与游标辅助
+    * *剩余工作*：补充更多过滤条件与跨服务端差异化的容错策略
 
-### P2（中优先）
+**【服务发现与实体能力】**
+* **XEP-0030 / 0115 能力发现机制**：已支持 disco#info 挂起等待、caps 节点构造与 presence 解析
+    * *剩余工作*：disco#items 补充、完整能力哈希计算与校验闭环
 
-1. `XEP-0333`
-   * 聊天标记
-2. `XEP-0085`
-   * 聊天状态通知
-3. `XEP-0308`
-   * 修改最后一条消息
-4. `XEP-0245`
-   * `/me` 语义封装
-5. `Jingle 栈`
-   * [XEP-0166](https://xmpp.org/extensions/xep-0166.html)、[XEP-0234](https://xmpp.org/extensions/xep-0234.html)、[XEP-0260](https://xmpp.org/extensions/xep-0260.html)、[XEP-0261](https://xmpp.org/extensions/xep-0261.html)
+**【移动端保活与推送】**
+* **XEP-0352 CSI / XEP-0357 Push**：`CsiPushComponent` 已打通 active/inactive 状态帧及无节点 push disable/enable 流程
+    * *剩余工作*：生命周期自动切换策略与 publish-options 全量语义
 
-## 备注
+**【文件传输】**
+* **XEP-0363 HTTP File Upload**：`HttpUploadComponent` 已支持 slot 申请、URL 解析隔离、HTTP 头白名单限制及尺寸超限错误解析
+    * *剩余工作*：自动失败重试机制与传输恢复策略
 
-* 本清单优先级用于指导“次时代 XMPP 客户端库”能力落地，不等同于发布承诺。
-* 若某协议状态发生变更（Draft/Stable/Deferred/Obsolete），应在更新实现状态时同步备注。
+---
+
+## 📅 未实现 (待办) 优先级清单
+
+### 🚧 P1 进阶能力 (优先待办)
+
+1. **OMEMO 端到端加密 (XEP-0384 + XEP-0420)**
+    * 设备列表、bundle 获取、会话加密与消息载荷封装
+2. **P0 协议族的严格语义补齐**
+    * 基于 XEP-0030/0115/0184/0280 补齐能力缓存、哈希严格验证、回执细粒度配置与多端一致性边界
+3. **隐私与管控 (XEP-0191)**
+    * 黑名单拉取与管理
+4. **用户资料 (XEP-0084 + XEP-0163)**
+    * 用户头像与基础 PEP 事件能力获取
+
+### ⏳ P2 体验增强 (中优待办)
+
+1. **聊天标记 (XEP-0333)**
+2. **聊天状态通知 (XEP-0085)**：输入中、暂停输入等状态
+3. **消息编辑 (XEP-0308)**：修改最后一条消息语义
+4. **特殊动作指令 (XEP-0245)**：`/me` 语义封装解析
+5. **Jingle 栈音视频基础**：涵盖 XEP-0166 / 0234 / 0260 / 0261 等
+
+---
+
+## 📝 备注
+
+* 优先级划分主要用于内部排期指导，不等同于立刻发布的版本承诺
+* 若 XSF 对某协议状态做出变更（如降级为 Deferred/Obsolete 或从 Draft 转为 Stable），将在辱骂 XSF 后更新实现状态时同步修正

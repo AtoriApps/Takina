@@ -33,6 +33,7 @@ class StreamManagementComponent internal constructor(
     var persistStateToStore: Boolean = false
     var restorePersistedStateOnStartup: Boolean = false
     var stateStore: StreamManagementStateStore? = null
+    var nowMillisProvider: () -> Long = { System.currentTimeMillis() }
 
     private val statesByJid = linkedMapOf<BareJid, SessionState>()
     private val jidByState = linkedMapOf<SessionState, BareJid>()
@@ -42,6 +43,10 @@ class StreamManagementComponent internal constructor(
         if (!connection.supportsStreamManagement) return LogUtils.debug(TAG, "服务端未宣告 SM，跳过协商", connection.boundJid)
         val state = stateFor(connection.boundJid)
         resetReconnectAttempts(state)
+        if (isResumeExpired(state)) {
+            LogUtils.warn(TAG, "SM 会话已过期，放弃 resume，改为 enable", connection.boundJid)
+            invalidateSessionForEnable(state)
+        }
         val previousId = state.sessionId
         val canResume = state.enabled && state.allowResume && !previousId.isNullOrBlank()
         if (canResume) {
@@ -89,6 +94,7 @@ class StreamManagementComponent internal constructor(
     }
 
     override fun interceptInboundFrame(connection: TakinaConnection, xml: String, context: TakinaContext): TakinaFrameInterceptResult {
+        val state = stateFor(connection.boundJid)
         val frame = onInboundFrame(connection.boundJid, xml) ?: return TakinaFrameInterceptResult(xml = xml)
         when (frame) {
             is InboundFrame.Enabled -> {
@@ -97,6 +103,12 @@ class StreamManagementComponent internal constructor(
             }
 
             is InboundFrame.Resumed -> {
+                if (!isResumedFrameConsistent(state, frame)) {
+                    LogUtils.warn(TAG, "SM resumed 的 previd 与请求不一致，回退 enable", connection.boundJid, "expected=${state.lastResumePreviousId}", "actual=${frame.previousId}")
+                    invalidateSessionForEnable(state)
+                    sendEnableInternal(connection.boundJid)
+                    return TakinaFrameInterceptResult(xml = xml)
+                }
                 LogUtils.warn(TAG, "Stream Management 已恢复", connection.boundJid, "acked=${frame.handledByServer}")
                 replayUnackedAfterResume(connection)
             }
@@ -275,6 +287,7 @@ class StreamManagementComponent internal constructor(
     fun onServerAcknowledged(state: SessionState, handledByServer: Long): Long {
         require(handledByServer >= 0) { "handledByServer 不能小于 0" }
         return synchronized(state) {
+            if (handledByServer < state.lastServerAckCount) return@synchronized state.lastServerAckCount
             val normalized = min(handledByServer, state.outboundSentCount)
             if (normalized > state.lastServerAckCount) {
                 state.lastServerAckCount = normalized
@@ -397,6 +410,7 @@ class StreamManagementComponent internal constructor(
                 state.enableRequested = false
                 state.resumeRequested = false
                 state.lastResumePreviousId = null
+                state.sessionStartedAtEpochMillis = nowMillisProvider()
             }
 
             is InboundFrame.Resumed -> synchronized(state) {
@@ -406,6 +420,7 @@ class StreamManagementComponent internal constructor(
                 state.enableRequested = false
                 state.resumeRequested = false
                 state.lastResumePreviousId = null
+                if (state.sessionStartedAtEpochMillis == 0L) state.sessionStartedAtEpochMillis = nowMillisProvider()
             }
 
             is InboundFrame.Acknowledged -> onServerAcknowledged(state, frame.handledByServer)
@@ -432,6 +447,7 @@ class StreamManagementComponent internal constructor(
                 state.enableRequested = false
                 state.resumeRequested = false
                 state.lastResumePreviousId = null
+                state.sessionStartedAtEpochMillis = 0L
             }
         }
 
@@ -457,6 +473,13 @@ class StreamManagementComponent internal constructor(
         if (persisted.sessionId.isBlank()) return
         if (!persisted.allowResume) return
         if (persisted.lastServerAckCount < 0L || persisted.outboundSentCount < persisted.lastServerAckCount) return
+        if (persisted.maxResumeSeconds != null && persisted.maxResumeSeconds > 0) {
+            val maxAge = persisted.maxResumeSeconds.toLong() * 1_000L
+            if (nowMillisProvider() - persisted.persistedAtEpochMillis > maxAge) {
+                stateStore?.clear(jid)
+                return
+            }
+        }
 
         synchronized(state) {
             state.enabled = true
@@ -473,6 +496,7 @@ class StreamManagementComponent internal constructor(
             state.awaitingServerAckReply = false
             state.outboundSinceAckRequest = 0
             state.pendingOutbound.clear()
+            state.sessionStartedAtEpochMillis = persisted.persistedAtEpochMillis
 
             var sequence = persisted.lastServerAckCount
             persisted.pendingOutbound.forEach { xml ->
@@ -501,11 +525,38 @@ class StreamManagementComponent internal constructor(
                 outboundSentCount = state.outboundSentCount,
                 lastServerAckCount = state.lastServerAckCount,
                 pendingOutbound = state.pendingOutbound.map { it.xml },
+                persistedAtEpochMillis = state.sessionStartedAtEpochMillis,
             )
         }
 
         if (snapshot == null) store.clear(jid)
         else store.save(jid, snapshot)
+    }
+
+    private fun invalidateSessionForEnable(state: SessionState) = synchronized(state) {
+        state.enabled = false
+        state.resumed = false
+        state.sessionId = null
+        state.allowResume = false
+        state.maxResumeSeconds = null
+        state.enableRequested = false
+        state.resumeRequested = false
+        state.lastResumePreviousId = null
+        state.sessionStartedAtEpochMillis = 0L
+    }
+
+    internal fun isResumedFrameConsistent(state: SessionState, frame: InboundFrame.Resumed): Boolean = synchronized(state) {
+        val expected = state.lastResumePreviousId
+        if (expected.isNullOrBlank()) return@synchronized true
+        val actual = frame.previousId ?: return@synchronized false
+        actual == expected
+    }
+
+    private fun isResumeExpired(state: SessionState): Boolean = synchronized(state) {
+        val maxSeconds = state.maxResumeSeconds ?: return@synchronized false
+        if (maxSeconds <= 0) return@synchronized false
+        if (state.sessionStartedAtEpochMillis <= 0L) return@synchronized false
+        nowMillisProvider() - state.sessionStartedAtEpochMillis > maxSeconds.toLong() * 1_000L
     }
 
     sealed interface InboundFrame {
@@ -579,6 +630,9 @@ class StreamManagementComponent internal constructor(
 
         var reconnectAttemptCount: Int = 0
             internal set
+
+        var sessionStartedAtEpochMillis: Long = 0L
+            internal set
     }
 
     internal data class PendingOutboundStanza(
@@ -593,6 +647,7 @@ class StreamManagementComponent internal constructor(
         val outboundSentCount: Long,
         val lastServerAckCount: Long,
         val pendingOutbound: List<String>,
+        val persistedAtEpochMillis: Long,
     )
 
     interface StreamManagementStateStore {

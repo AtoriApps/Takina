@@ -54,8 +54,10 @@ class TakinaConfiguration {
         registerOptionalComponents()
     }
 
-    // 核心组件
     internal fun registerCoreComponents() {
+        /* TIPS：当前核心能力内聚在内核，暂不需要注册什么独立的核心组件
+        AI将军说：连接管理、基础收发、事件总线等基座能力，建议留在内核 */
+
         // registerComponent(XxComponent)
     }
 

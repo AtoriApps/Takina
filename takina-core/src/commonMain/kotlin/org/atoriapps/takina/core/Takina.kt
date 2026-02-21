@@ -71,7 +71,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         }
 
         config.accountConfigurations.forEach { account ->
-            val bareJid = account.jid?.bareJid ?: error("account jid cannot be null")
+            val bareJid = account.jid?.bareJid ?: error("未提供账号Jid")
             accountRuntime.addAccountDefinition(bareJid, account)
         }
 
@@ -83,12 +83,14 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     open fun connectAll() {
         ensureNotShutdown()
         LogUtils.info(TAG, "开始连接全部账号", "总数=${accountRuntime.accountCount}")
+
         var connected = 0
         configuredAccounts.forEach { jid ->
             runCatching { if (connectInternal(jid)) connected += 1 }.onFailure { error ->
                 LogUtils.error(TAG, "账号连接失败", jid, error.message ?: "未知错误")
             }
         }
+
         LogUtils.info(TAG, "全部账号连接流程结束", "成功=$connected", "总数=${accountRuntime.accountCount}")
         events.emit(AllConnectedEvent(connectedCount = connected, configuredCount = accountRuntime.accountCount))
     }
@@ -96,11 +98,13 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     open fun disconnectAll() {
         val connections = accountRuntime.activeConnections
         LogUtils.info(TAG, "开始断开全部账号连接", "连接数=${connections.size}")
+
         connections.forEach { connection ->
             dispatchBeforeDisconnect(connection.boundJid)
             synchronized(connection) { if (connection.state != TakinaConnection.ConnectionState.DISCONNECTED) connection.disconnect() }
             dispatchAfterDisconnected(connection.boundJid, reason = null)
         }
+
         LogUtils.info(TAG, "全部账号已断开", "连接数=${connections.size}")
         events.emit(AllDisconnectedEvent(connectionCount = connections.size))
     }
@@ -110,8 +114,10 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
             if (isShutdown) return
             isShutdown = true
         }
+
         disconnectAll()
         shutdownInstalledComponents()
+
         events.shutdown()
     }
 
@@ -122,9 +128,11 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
 
     open fun disconnect(jid: Jid) {
         dispatchBeforeDisconnect(jid.bareJid)
+
         accountRuntime.findConnection(jid.bareJid)?.let { connection ->
             synchronized(connection) { connection.disconnect() }
         }
+
         dispatchAfterDisconnected(jid.bareJid, reason = null)
     }
 
@@ -135,11 +143,13 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
 
     internal fun sendStanza(stanza: XmppStanza) {
         ensureNotShutdown()
+
         val from = when (stanza) {
             is MessageStanza -> stanza.from
             is PresenceStanza -> stanza.from
             is IqStanza -> stanza.from
         }
+
         sendStanza(from, stanza)
     }
 
@@ -209,14 +219,16 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
 
     private fun resolveConnectedConnectionForOutbound(from: BareJid?): TakinaConnection {
         if (from != null) return ensureConnectedConnection(from)
+
         val connected = accountRuntime.connectedConnections
         if (connected.size == 1) return connected.first()
+
         if (configuredAccounts.size == 1) {
             val single = configuredAccounts.first()
             return ensureConnectedConnection(single)
         }
 
-        throw AmbiguousAccountException("multiple accounts configured, message.from is required")
+        throw AmbiguousAccountException("由于添加了多个账号，请显式指定发送方账号（From）")
     }
 
     private fun ensureConnectedConnection(jid: BareJid): TakinaConnection {
@@ -225,15 +237,15 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         if (current.state == TakinaConnection.ConnectionState.CONNECTED) return current
 
         connectInternal(jid)
-        val connected = accountRuntime.findConnection(jid) ?: throw AccountNotFoundException("account $jid not found after reconnect")
+        val connected = accountRuntime.findConnection(jid) ?: throw AccountNotFoundException("重连接后找不到账号 $jid")
 
-        if (connected.state != TakinaConnection.ConnectionState.CONNECTED) throw NotConnectedException("account $jid is not connected")
+        if (connected.state != TakinaConnection.ConnectionState.CONNECTED) throw NotConnectedException("账号 $jid 未连接")
         return connected
     }
 
     private fun connectAndGet(jid: BareJid): TakinaConnection {
         connectInternal(jid)
-        return accountRuntime.findConnection(jid) ?: throw AccountNotFoundException("account $jid not found after connect")
+        return accountRuntime.findConnection(jid) ?: throw AccountNotFoundException("连接后找不到账号 $jid")
     }
 
     private fun handleInboundStanza(connection: TakinaConnection, xml: String) {
@@ -265,8 +277,10 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     }
 
     private fun ensureNotShutdown() {
-        if (isShutdown) throw IllegalStateException("Takina 已 shutdown，不能继续执行该操作")
+        if (isShutdown) throw IllegalStateException("Takina 已休止，不能继续执行该操作")
     }
+
+    // TODO：未来可能要提取拦截为Runtime
 
     private fun sendRawWithInterceptors(connection: TakinaConnection, xml: String) {
         val finalXml = applyOutboundFrameInterceptors(connection, xml) ?: return
@@ -277,13 +291,16 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         var current = xml
         for (component in orderedComponents) {
             val interceptor = component as? TakinaOutboundFrameInterceptor ?: continue
+
             val result = runCatching { interceptor.interceptOutboundFrame(connection, current, this) }
                 .onFailure { error -> LogUtils.error(TAG, "出站拦截器异常", component::class.clzName, error.message ?: "未知错误") }
                 .getOrNull() ?: continue
+
             if (result.action == TakinaFrameInterceptAction.DROP) {
                 LogUtils.warn(TAG, "出站帧被拦截器丢弃", connection.boundJid, component::class.clzName)
                 return null
             }
+
             current = result.xml
         }
         return current
@@ -293,13 +310,16 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         var current = xml
         for (component in orderedComponents) {
             val interceptor = component as? TakinaInboundFrameInterceptor ?: continue
+
             val result = runCatching { interceptor.interceptInboundFrame(connection, current, this) }
                 .onFailure { error -> LogUtils.error(TAG, "入站帧拦截器异常", component::class.clzName, error.message ?: "未知错误") }
                 .getOrNull() ?: continue
+
             if (result.action == TakinaFrameInterceptAction.DROP) {
                 LogUtils.warn(TAG, "入站帧被拦截器丢弃", connection.boundJid, component::class.clzName)
                 return null
             }
+
             current = result.xml
         }
         return current
@@ -310,13 +330,16 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         var currentXml = xml
         for (component in orderedComponents) {
             val interceptor = component as? TakinaInboundStanzaInterceptor ?: continue
+
             val result = runCatching { interceptor.interceptInboundStanza(connection, currentType, currentXml, this) }
                 .onFailure { error -> LogUtils.error(TAG, "入站 stanza 拦截器异常", component::class.clzName, error.message ?: "未知错误") }
                 .getOrNull() ?: continue
+
             if (result.action == TakinaFrameInterceptAction.DROP) {
                 LogUtils.warn(TAG, "入站 stanza 被拦截器丢弃", connection.boundJid, component::class.clzName)
                 return null
             }
+
             currentType = result.stanzaType
             currentXml = result.xml
         }
@@ -326,63 +349,69 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     private fun dispatchOutboundFrameSent(connection: TakinaConnection, xml: String) {
         for (component in orderedComponents) {
             val observer = component as? TakinaOutboundFrameObserver ?: continue
-            runCatching { observer.onOutboundFrameSent(connection, xml, this) }
-                .onFailure { error -> LogUtils.error(TAG, "出站发送后回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { observer.onOutboundFrameSent(connection, xml, this) }.onFailure { error -> LogUtils.error(TAG, "出站发送后回调异常", component::class.clzName, error.message ?: "未知错误") }
         }
     }
 
     private fun dispatchBeforeConnect(jid: BareJid) {
         for (component in orderedComponents) {
             val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
-            runCatching { lifecycle.onBeforeConnect(jid, this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件连接前回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { lifecycle.onBeforeConnect(jid, this) }.onFailure { error ->
+                LogUtils.error(TAG, "组件连接前回调异常", component::class.clzName, error.message ?: "未知错误")
+            }
         }
     }
 
     private fun dispatchAfterConnected(connection: TakinaConnection) {
         for (component in orderedComponents) {
             val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
-            runCatching { lifecycle.onAfterConnected(connection, this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件连接后回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { lifecycle.onAfterConnected(connection, this) }.onFailure { error ->
+                LogUtils.error(TAG, "组件连接后回调异常", component::class.clzName, error.message ?: "未知错误")
+            }
         }
     }
 
     private fun dispatchAfterConnectFailed(jid: BareJid, reason: String) {
         for (component in orderedComponents) {
             val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
-            runCatching { lifecycle.onAfterConnectFailed(jid, reason, this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件连接失败回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { lifecycle.onAfterConnectFailed(jid, reason, this) }.onFailure { error ->
+                LogUtils.error(TAG, "组件连接失败回调异常", component::class.clzName, error.message ?: "未知错误")
+            }
         }
     }
 
     private fun dispatchBeforeDisconnect(jid: BareJid) {
         for (component in orderedComponents) {
             val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
-            runCatching { lifecycle.onBeforeDisconnect(jid, this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件断开前回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { lifecycle.onBeforeDisconnect(jid, this) }.onFailure { error ->
+                LogUtils.error(TAG, "组件断开前回调异常", component::class.clzName, error.message ?: "未知错误")
+            }
         }
     }
 
     private fun dispatchAfterDisconnected(jid: BareJid, reason: String?) {
         for (component in orderedComponents) {
             val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
-            runCatching { lifecycle.onAfterDisconnected(jid, reason, this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件断开后回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { lifecycle.onAfterDisconnected(jid, reason, this) }.onFailure { error ->
+                LogUtils.error(TAG, "组件断开后回调异常", component::class.clzName, error.message ?: "未知错误")
+            }
         }
     }
 
     private fun dispatchConnectionStageChanged(jid: BareJid, oldStage: ConnectionLifecycleStage, newStage: ConnectionLifecycleStage) {
         for (component in orderedComponents) {
             val lifecycle = component as? TakinaConnectionLifecycleComponent ?: continue
-            runCatching { lifecycle.onConnectionStageChanged(jid, oldStage, newStage, this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件阶段变化回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { lifecycle.onConnectionStageChanged(jid, oldStage, newStage, this) }.onFailure { error ->
+                LogUtils.error(TAG, "组件阶段变化回调异常", component::class.clzName, error.message ?: "未知错误")
+            }
         }
     }
 
     private fun shutdownInstalledComponents() {
         for (component in orderedComponents) {
-            runCatching { component.onShutdown(this) }
-                .onFailure { error -> LogUtils.error(TAG, "组件 shutdown 回调异常", component::class.clzName, error.message ?: "未知错误") }
+            runCatching { component.onShutdown(this) }.onFailure { error ->
+                LogUtils.error(TAG, "组件 shutdown 回调异常", component::class.clzName, error.message ?: "未知错误")
+            }
         }
     }
 
@@ -418,14 +447,11 @@ interface TakinaContext {
 
     fun <COMPONENT : TakinaComponent> findComponent(type: KClass<COMPONENT>): COMPONENT?
 
-    fun <COMPONENT : TakinaComponent> requireComponent(type: KClass<COMPONENT>): COMPONENT =
-        findComponent(type) ?: throw IllegalStateException("组件 ${type.clzName} 未加载")
+    fun <COMPONENT : TakinaComponent> requireComponent(type: KClass<COMPONENT>): COMPONENT = findComponent(type) ?: throw IllegalStateException("组件 ${type.clzName} 未加载")
 
-    fun <COMPONENT : TakinaComponent> findComponent(provider: TakinaComponentProvider<COMPONENT>): COMPONENT? =
-        findComponent(provider.getComponentType())
+    fun <COMPONENT : TakinaComponent> findComponent(provider: TakinaComponentProvider<COMPONENT>): COMPONENT? = findComponent(provider.getComponentType())
 
-    fun <COMPONENT : TakinaComponent> requireComponent(provider: TakinaComponentProvider<COMPONENT>): COMPONENT =
-        requireComponent(provider.getComponentType())
+    fun <COMPONENT : TakinaComponent> requireComponent(provider: TakinaComponentProvider<COMPONENT>): COMPONENT = requireComponent(provider.getComponentType())
 }
 
 inline fun <reified COMPONENT : TakinaComponent> TakinaContext.findComponent(): COMPONENT? = findComponent(COMPONENT::class)

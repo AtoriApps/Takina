@@ -38,7 +38,7 @@ import kotlin.reflect.KClass
 
 abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     companion object {
-        private const val TAG = "AbstractTakina"
+        private const val TAG = "Takina"
     }
 
     final override val events: TakinaEventBus = TakinaEventBus(this)

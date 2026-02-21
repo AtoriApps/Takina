@@ -35,7 +35,8 @@
 
 **【流管理与可靠性投递】**
 * **XEP-0198 Stream Management**：`StreamManagementComponent` 支持 enable/resume、状态跟踪、自动请求 ack、重连恢复与未确认消息防丢重放
-    * *剩余工作*：复杂网络异常场景下的重放策略调优
+    * *补充说明*：已增加“恢复握手窗口普通 stanza 暂缓与握手后补发”策略，降低恢复窗口内并发业务 stanza 干扰导致的 resume 失败
+    * *剩余工作*：跨服务端兼容性回归（含 location 提示、不同失败码分支与长时间离线恢复边界）
 * **XEP-0184 Delivery Receipts**：`MessageReceiptsComponent` 支持回执请求/确认结构的构造解析，以及自动/手动回执 API
 
 **【群聊与书签】**

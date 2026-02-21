@@ -86,7 +86,7 @@ fun main() {
     takina.connectAll()
 
     takina.request.presence {
-        status = "Proudly using Takina, made in China!"
+        status = "骄傲地宣告：本账号正在进行Takina客户端冒烟测试，爱来自中国"
     }.send()
 
     if (smokeSendMsg) {

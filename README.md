@@ -33,7 +33,7 @@ Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，
 * `CapabilitiesComponent`：XEP-0115 caps 节点构造与 presence 载荷解析
 * `CarbonsComponent`：XEP-0280 Carbons 启用/关闭与转发消息解析
 * `MessageReceiptsComponent`：XEP-0184 回执请求/确认载荷构造、消息解析与自动回执策略
-* `StreamManagementComponent`：XEP-0198 基础模型（帧解析、计数跟踪、自动确认与重连恢复）
+* `StreamManagementComponent`：XEP-0198 基础模型（帧解析、计数跟踪、自动确认、重连恢复、恢复握手窗口暂缓普通 stanza）
 * `RosterComponent`：RFC 6121 roster 拉取与增删改、group 解析、订阅流程与 push 来源校验
 * `MamComponent`：XEP-0313 + XEP-0059 查询构造、分页参数、结果聚合与游标辅助
 * `MucComponent`：XEP-0045 群聊进出与消息，XEP-0249 邀请，XEP-0402 Bookmarks 2 操作
@@ -178,6 +178,8 @@ createTakina(registerAllComponents = false) {
   }
 }
 ```
+
+注：`StreamManagementComponent` 在发送 `<resume/>` 后，会暂缓普通 `message/presence/iq` 出站，直到收到 `<resumed/>` 或失败后新会话 `<enabled/>`，再按顺序补发，避免在恢复窗口提前发送“状态重建类 stanza”（如 `carbons enable`）导致恢复失败
 
 **协作式持久化恢复**：
 因数据敏感，Takina 负责恢复流程控制，使用方负责状态的落地存储（DB、KV、加密等）

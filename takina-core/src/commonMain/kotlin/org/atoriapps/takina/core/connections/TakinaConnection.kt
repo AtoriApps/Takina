@@ -27,7 +27,7 @@ class TakinaConnection(
     ) -> Unit = { _, _, _ -> },
 ) {
     companion object {
-        private const val TAG = "TakinaConnection"
+        private const val TAG = "Takina连接"
     }
 
     enum class ConnectionState {

@@ -162,6 +162,8 @@ class ComponentsProtocolTest {
         assertEquals("sm-1", state.sessionId)
         assertTrue(state.allowResume)
         assertEquals(120, state.maxResumeSeconds)
+        assertTrue(sm.isSmControlFrame("<resume xmlns='urn:xmpp:sm:3' previd='old' h='1'/>"))
+        assertFalse(sm.isSmControlFrame("<iq type='set'><enable xmlns='urn:xmpp:carbons:2'/></iq>"))
 
         sm.autoAckRequestInterval = 2
         sm.onOutboundStanzaSent(state, "<message id='m1'/>")
@@ -220,6 +222,14 @@ class ComponentsProtocolTest {
         sm.scheduleResumeReplay(state, resumeReplay)
         resumeReplay.forEach { xml -> sm.onOutboundStanzaSent(state, xml) }
         assertEquals(1, state.outboundSentCount)
+
+        sm.markResumeRequested(state, "sm-2")
+        assertTrue(sm.shouldDeferOutboundUntilSmSettled(state))
+        val connection = TakinaConnection(config = ConnectionConfig(jid = jid), passwordProvider = { "password" })
+        val dropped = sm.interceptOutboundFrame(connection, "<iq type='set'><enable xmlns='urn:xmpp:carbons:2'/></iq>", takina)
+        assertEquals(org.atoriapps.takina.core.components.TakinaFrameInterceptAction.DROP, dropped.action)
+        val allowed = sm.interceptOutboundFrame(connection, "<resume xmlns='urn:xmpp:sm:3' previd='sm-2' h='1'/>", takina)
+        assertEquals(org.atoriapps.takina.core.components.TakinaFrameInterceptAction.CONTINUE, allowed.action)
     }
 
     @Test

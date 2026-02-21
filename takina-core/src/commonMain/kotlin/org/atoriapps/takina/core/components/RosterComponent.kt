@@ -21,12 +21,12 @@ import org.atoriapps.takina.core.xmpp.toJid
 
 class RosterComponent internal constructor(private val takina: AbstractTakina) : TakinaInboundStanzaInterceptor, TakinaConnectionLifecycleComponent {
     companion object : TakinaComponentProvider<RosterComponent> {
-        private const val TAG = "RosterComponent"
+        private const val TAG = "花名册组件"
 
         const val ROSTER_NAMESPACE: String = "jabber:iq:roster"
 
         override fun getInstance(context: TakinaContext): RosterComponent {
-            val core = context as? AbstractTakina ?: error("RosterComponent 只能安装在 Takina 核心上下文中")
+            val core = context as? AbstractTakina ?: error("花名册组件只能安装在 Takina 核心上下文中")
             return RosterComponent(core)
         }
 

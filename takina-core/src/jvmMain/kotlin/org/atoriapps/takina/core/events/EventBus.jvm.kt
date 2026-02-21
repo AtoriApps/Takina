@@ -10,7 +10,7 @@ import kotlin.reflect.KClass
 
 actual class TakinaEventBus actual constructor(context: TakinaContext) : AbstractTakinaEventBus(context) {
     companion object {
-        private const val TAG = "EventBus.JVM"
+        private const val TAG = "事件总线.jvm"
     }
 
     enum class Mode {

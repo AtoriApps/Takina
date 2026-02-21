@@ -19,13 +19,13 @@ class CarbonsComponent internal constructor(
     private val takina: AbstractTakina,
 ) : TakinaConnectionLifecycleComponent {
     companion object : TakinaComponentProvider<CarbonsComponent> {
-        private const val TAG = "CarbonsComponent"
+        private const val TAG = "消息碳组件"
 
         const val NAMESPACE: String = "urn:xmpp:carbons:2"
         const val FORWARDED_NAMESPACE: String = "urn:xmpp:forward:0"
 
         override fun getInstance(context: TakinaContext): CarbonsComponent {
-            val core = context as? AbstractTakina ?: error("CarbonsComponent 只能安装在 Takina 核心上下文中")
+            val core = context as? AbstractTakina ?: error("消息碳组件只能安装在 Takina 核心上下文中")
             return CarbonsComponent(core)
         }
 
@@ -38,9 +38,9 @@ class CarbonsComponent internal constructor(
         if (!autoEnableOnConnect) return
         runCatching {
             enable(from = connection.boundJid).send()
-            LogUtils.debug(TAG, "已发送 Message Carbons enable", connection.boundJid)
+            LogUtils.debug(TAG, "已发送消息碳 enable", connection.boundJid)
         }.onFailure { error ->
-            LogUtils.warn(TAG, "连接后自动启用 Carbons 失败", connection.boundJid, error.message ?: "未知错误")
+            LogUtils.warn(TAG, "连接后自动启用消息碳失败", connection.boundJid, error.message ?: "未知错误")
         }
     }
 

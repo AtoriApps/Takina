@@ -75,7 +75,7 @@ class DiscoveryComponent internal constructor(
         ),
     )
 
-    fun discoInfoAwait(
+    fun getAwait(
         to: Jid? = null,
         from: Jid? = null,
         node: String? = null,

@@ -181,6 +181,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
 
     private fun connectInternal(jid: BareJid): Boolean {
         val account = accountRuntime.requireAccountDefinition(jid)
+
         val connection = accountRuntime.getOrCreateConnection(jid) {
             TakinaConnection(
                 config = account.resolveConnectionConfig(),
@@ -207,7 +208,8 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         }
 
         return synchronized(connection) {
-            if (connection.state == TakinaConnection.ConnectionState.CONNECTED) return@synchronized false
+            if (connection.state == TakinaConnection.ConnectionState.CONNECTED) return@synchronized false // 不应该true吗？已连接
+
             try {
                 dispatchBeforeConnect(jid)
                 LogUtils.debug(TAG, "开始连接账号", jid)
@@ -270,7 +272,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
 
     private fun handleOutboundFrame(connection: TakinaConnection, xml: String) {
         dispatchOutboundFrameSent(connection, xml)
-        events.emit(FrameOutboundEvent(connection.boundJid,  xml))
+        events.emit(FrameOutboundEvent(connection.boundJid, xml))
     }
 
     private fun handleConnectionClosed(connection: TakinaConnection, reason: String) {

@@ -41,3 +41,14 @@ tasks.register<JavaExec>("runSmokeClientExample") {
     )
     mainClass.set("org.atoriapps.takina.examples.SmokeClientExampleKt")
 }
+
+tasks.register<JavaExec>("runOmemoPrivateSmokeExample") {
+    group = "application"
+    description = "Run OMEMO private chat smoke example (requires TAKINA_A_*/TAKINA_B_* env vars)"
+    dependsOn("jvmJar")
+    classpath(
+        tasks.named("jvmJar"),
+        kotlin.targets.getByName("jvm").compilations.getByName("main").runtimeDependencyFiles
+    )
+    mainClass.set("org.atoriapps.takina.examples.OmemoPrivateSmokeExampleKt")
+}

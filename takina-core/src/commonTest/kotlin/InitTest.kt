@@ -9,6 +9,7 @@ import org.atoriapps.takina.core.components.HttpUploadComponent
 import org.atoriapps.takina.core.components.MamComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.MucComponent
+import org.atoriapps.takina.core.components.OmemoComponent
 import org.atoriapps.takina.core.components.RosterComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.discovery
@@ -16,6 +17,7 @@ import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.exceptions.AmbiguousAccountException
 import org.atoriapps.takina.core.exceptions.InvalidRequestException
+import org.atoriapps.takina.core.requests.EncryptionMethod
 import org.atoriapps.takina.core.xmpp.createBareJid
 import org.atoriapps.takina.core.xmpp.toBareJid
 import org.atoriapps.takina.core.xmpp.toJid
@@ -65,6 +67,46 @@ class CommonInitTest {
         assertFailsWith<InvalidRequestException> {
             takina.request.message {
                 body = "no destination"
+            }
+        }
+    }
+
+    @Test
+    fun messageRequest_encryptionWithoutMethod_shouldFail() {
+        val takina = createTakina(registerAllComponents = false) {
+            addAccount {
+                jid = "alice@example.com".toBareJid()
+                password { "password" }
+            }
+        }
+
+        assertFailsWith<InvalidRequestException> {
+            takina.request.message {
+                to = "bob@example.com".toBareJid()
+                body = "secret"
+                encryption {
+                    fallbackBody = "encrypted"
+                }
+            }
+        }
+    }
+
+    @Test
+    fun messageRequest_omemoWithoutBody_shouldFail() {
+        val takina = createTakina(registerAllComponents = false) {
+            addAccount {
+                jid = "alice@example.com".toBareJid()
+                password { "password" }
+            }
+        }
+
+        assertFailsWith<InvalidRequestException> {
+            takina.request.message {
+                to = "bob@example.com".toBareJid()
+                subject = "only-subject"
+                encryption {
+                    method = EncryptionMethod.OMEMO
+                }
             }
         }
     }
@@ -210,6 +252,7 @@ class CommonInitTest {
         assertNotNull(takina.findComponent(RosterComponent))
         assertNotNull(takina.findComponent(MamComponent))
         assertNotNull(takina.findComponent(MucComponent))
+        assertNotNull(takina.findComponent(OmemoComponent))
         assertNotNull(takina.findComponent(CsiPushComponent))
         assertNotNull(takina.findComponent(HttpUploadComponent))
         assertNotNull(takina.findComponent(ConnectionDiscoveryComponent))

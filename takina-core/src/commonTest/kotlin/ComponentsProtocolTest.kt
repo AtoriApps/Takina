@@ -483,10 +483,10 @@ class ComponentsProtocolTest {
         }
 
         val roster = takina.roster
-        val getXml = roster.rosterGet(from = jid, version = "ver-1").toXml()
+        val getXml = roster.getAwait(from = jid, version = "ver-1").toXml()
         assertTrue(getXml.contains("jabber:iq:roster"))
         assertTrue(getXml.contains("ver='ver-1'"))
-        val getVersioningXml = roster.rosterGet(from = jid, requestVersioning = true).toXml()
+        val getVersioningXml = roster.getAwait(from = jid, requestVersioning = true).toXml()
         assertTrue(getVersioningXml.contains("ver=''"))
 
         val setXml = roster.rosterSetItem(jid = "bob@example.com".toBareJid(), name = "Bob", from = jid).toXml()

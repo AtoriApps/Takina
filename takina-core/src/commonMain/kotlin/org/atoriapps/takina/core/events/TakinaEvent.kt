@@ -7,13 +7,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import org.atoriapps.takina.core.TakinaContext
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.reflect.KClass
 
 interface TakinaEventHandler<in T : TakinaEvent> {
     fun onEvent(event: T, context: TakinaContext)
 }
 
-abstract class TakinaEvent{
+abstract class TakinaEvent {
     abstract val description: String
 }
 
@@ -30,6 +32,8 @@ interface TakinaEventBusInterface {
     fun <EVENT : TakinaEvent> removeOn(takinaEventClz: KClass<EVENT>, handler: TakinaEventHandler<EVENT>)
 
     fun shutdown()
+
+    var enableEventLog: Boolean
 }
 
 data class TakinaEventFlowBackpressure(
@@ -46,6 +50,9 @@ data class TakinaEventFlowBackpressure(
 abstract class AbstractTakinaEventBus(val context: TakinaContext) : TakinaEventBusInterface {
     private val lambdaToHandler = linkedMapOf<Any, TakinaEventHandler<TakinaEvent>>()
 
+    @Volatile
+    override var enableEventLog = true
+
     fun <EVENT : TakinaEvent> on(takinaEventClz: TakinaEventDescriber<EVENT>, handler: TakinaEventHandler<EVENT>) {
         on(takinaEventClz.eventType, handler)
     }
@@ -54,11 +61,11 @@ abstract class AbstractTakinaEventBus(val context: TakinaContext) : TakinaEventB
         removeOn(takinaEventClz.eventType, handler)
     }
 
-    fun <EVENT:TakinaEvent> on(takinaEventClz: TakinaEventDescriber<EVENT>, handler: (EVENT) -> Unit) {
+    fun <EVENT : TakinaEvent> on(takinaEventClz: TakinaEventDescriber<EVENT>, handler: (EVENT) -> Unit) {
         on(takinaEventClz.eventType, handler)
     }
 
-    fun <EVENT:TakinaEvent> removeOn(takinaEventClz: TakinaEventDescriber<EVENT>, handler: (EVENT) -> Unit) {
+    fun <EVENT : TakinaEvent> removeOn(takinaEventClz: TakinaEventDescriber<EVENT>, handler: (EVENT) -> Unit) {
         removeOn(takinaEventClz.eventType, handler)
     }
 

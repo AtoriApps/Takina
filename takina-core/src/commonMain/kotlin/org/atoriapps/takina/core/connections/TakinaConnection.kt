@@ -84,40 +84,36 @@ class TakinaConnection(
             lastFeaturesXml = featuresXml
 
             if (config.securityMode == SecurityMode.START_TLS) {
-                if (!XmppProtocol.containsStartTls(featuresXml)) {
-                    throw TakinaConnectionException(
-                        message = "服务端不支持 STARTTLS，无法继续连接",
-                        kind = ConnectionFailureKind.STARTTLS_UNSUPPORTED,
-                        detail = "server does not advertise STARTTLS for ${config.jid.domain}",
-                    )
-                }
+                if (!XmppProtocol.containsStartTls(featuresXml)) throw TakinaConnectionException(
+                    message = "服务端不支持 STARTTLS，无法继续连接",
+                    kind = ConnectionFailureKind.STARTTLS_UNSUPPORTED,
+                    detail = "server does not advertise STARTTLS for ${config.jid.domain}",
+                )
 
                 sendFrame(createdConnector, XmppStream.startTlsRequest())
                 val startTlsResponse = readFrame(createdConnector, config.connectTimeoutMillis)
-                if (!XmppProtocol.isStartTlsProceed(startTlsResponse)) {
-                    throw TakinaConnectionException(
-                        message = "TLS 协商失败",
-                        kind = ConnectionFailureKind.TLS_NEGOTIATION_FAILED,
-                        detail = startTlsResponse,
-                    )
-                }
+                if (!XmppProtocol.isStartTlsProceed(startTlsResponse)) throw TakinaConnectionException(
+                    message = "TLS 协商失败",
+                    kind = ConnectionFailureKind.TLS_NEGOTIATION_FAILED,
+                    detail = startTlsResponse,
+                )
+
                 createdConnector.upgradeToTls(config)
                 moveLifecycle(
                     target = ConnectionLifecycleStage.TLS_NEGOTIATED,
                     allowedFrom = setOf(ConnectionLifecycleStage.STREAM_OPENED),
                     reason = "TLS 升级完成",
                 )
+
                 featuresXml = openStreamAndReadFeatures(createdConnector)
                 lastFeaturesXml = featuresXml
             }
 
-            if (!XmppProtocol.containsMechanism(featuresXml, "PLAIN")) {
-                throw TakinaConnectionException(
-                    message = "服务端不支持 SASL PLAIN，无法认证",
-                    kind = ConnectionFailureKind.AUTH_MECHANISM_UNSUPPORTED,
-                    detail = featuresXml,
-                )
-            }
+            if (!XmppProtocol.containsMechanism(featuresXml, "PLAIN")) throw TakinaConnectionException(
+                message = "服务端不支持 SASL PLAIN，无法认证",
+                kind = ConnectionFailureKind.AUTH_MECHANISM_UNSUPPORTED,
+                detail = featuresXml,
+            )
 
             sendFrame(createdConnector, XmppStream.authPlain(config.jid, passwordProvider()))
             val authResult = readFrame(createdConnector, config.connectTimeoutMillis)

@@ -10,6 +10,9 @@ actual fun platformPrint(method: LogUtils.Method, tag: String, message: String) 
 }
 
 actual object Base64Codec {
-    actual fun encodeToString(value: ByteArray): String =
+    actual fun encode(value: ByteArray): String =
         Base64.getEncoder().encodeToString(value)
+
+    actual fun decode(value: String): ByteArray =
+        Base64.getDecoder().decode(value)
 }

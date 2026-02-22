@@ -29,7 +29,7 @@ object XmppStream {
     fun authPlain(jid: BareJid, password: String): String {
         val username = jid.userName ?: ""
         val payload = "\u0000$username\u0000$password".encodeToByteArray()
-        val encoded = Base64Codec.encodeToString(payload)
+        val encoded = Base64Codec.encode(payload)
         return "<auth xmlns='${XmppNamespaces.SASL}' mechanism='PLAIN'>$encoded</auth>"
     }
 

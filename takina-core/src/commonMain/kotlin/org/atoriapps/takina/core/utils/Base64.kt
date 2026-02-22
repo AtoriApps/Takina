@@ -1,5 +1,7 @@
 package org.atoriapps.takina.core.utils
 
 expect object Base64Codec {
-    fun encodeToString(value: ByteArray): String
+    fun encode(value: ByteArray): String
+
+    fun decode(value: String): ByteArray
 }

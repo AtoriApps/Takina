@@ -4,8 +4,6 @@ import kotlinx.coroutines.runBlocking
 import org.atoriapps.takina.core.components.*
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.createTakina
-import org.atoriapps.takina.core.events.ConnectionClosedEvent
-import org.atoriapps.takina.core.events.ConnectionFailedEvent
 import org.atoriapps.takina.core.events.FrameInboundEvent
 import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.xmpp.createBareJid
@@ -65,8 +63,6 @@ fun main() {
         }
     }
 
-    takina.events.on(ConnectionFailedEvent) { println("连接失败：${it.jid} -> ${it.reason}") }
-    takina.events.on(ConnectionClosedEvent) { println("连接关闭：${it.jid} -> ${it.reason}") }
     takina.events.on(FrameInboundEvent) { println("入站：${it.xml}") }
     takina.events.on(FrameOutboundEvent) { println("出站：${it.xml}") }
 
@@ -85,15 +81,11 @@ fun main() {
     }
 
     runBlocking {
-        val result = takina.discovery.discoInfoAwait(
-            from = jid,
-            to = createBareJid(domain = jid.domain),
-            timeoutMillis = 8000,
-        ).awaitResult()
+        val result = takina.discovery.getAwait(from = jid, to = createBareJid(domain = jid.domain), timeoutMillis = 8000,).awaitResult()
         println("disco 结果：type=${result.type} id=${result.id}")
 
         if (smokeRoster) runCatching {
-            val rosterResult = takina.roster.rosterGet(from = jid, timeoutMillis = 8_000).awaitResult()
+            val rosterResult = takina.roster.getAwait(from = jid, timeoutMillis = 8_000).awaitResult()
             println("roster 测试通过：type=${rosterResult.type} id=${rosterResult.id}")
         }.onFailure { println("roster 测试失败：${it.message}") }
 
@@ -142,7 +134,7 @@ fun main() {
 
     Thread.sleep(smokeDurationSeconds * 1000L)
 
-    takina.disconnect(jid)
+    takina.disconnectAll()
 }
 
 private fun String?.toBooleanLike(): Boolean = this != null && (equals("1") || equals("true", ignoreCase = true))

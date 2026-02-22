@@ -40,6 +40,7 @@ Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，
 * `CsiPushComponent`：XEP-0352 活跃状态切换 + XEP-0357 push 开关与发现解析
 * `HttpUploadComponent`：XEP-0363 slot 申请、URL 解析与上传错误处理
 * `ConnectionDiscoveryComponent`：XEP-0156 host-meta 备用连接解析与首选端点选择
+* `OmemoComponent`：XEP-0384 (OMEMO 2) 设备材料同步 + 端到端加解密（`urn:xmpp:omemo:2`）
 
 ## 功能进度
 
@@ -206,6 +207,42 @@ createTakina(registerAllComponents = false) {
 }
 ```
 
+### 5. OMEMO 私聊收发（XEP-0384）
+
+`OmemoComponent` 提供了设备材料发布、联系人材料同步、消息加密与解密能力。当前实现采用真实密码学链路（ECDH + HKDF-SHA256 + AES-GCM）并落在 OMEMO 2 的节点与消息结构上，可用于 Takina 双端私聊加密收发验证
+发送侧支持统一消息 DSL：不配置 `encryption {}` 时保持明文；配置后走对应加密方法
+
+```kotlin
+import kotlinx.coroutines.runBlocking
+import org.atoriapps.takina.core.components.OmemoComponent
+import org.atoriapps.takina.core.components.omemo
+
+runBlocking {
+  val alice = "alice@example.com".toBareJid()
+  val bob = "bob@example.com".toBareJid()
+
+  val takina = createTakina(registerAllComponents = false) {
+    registerComponent(OmemoComponent)
+    // addAccount ... (alice)
+  }
+
+  takina.connectAll()
+  takina.omemo.bootstrapLocalDevice(alice)
+  takina.omemo.publishOwnMaterial(alice)
+  takina.omemo.syncContactMaterial(from = alice, contact = bob)
+  takina.request.message {
+    from = alice
+    to = bob
+    body = "hello omemo"
+    encryption {
+      method = EncryptionMethod.OMEMO
+      fallbackBody = "信息已加密，请使用支持 OMEMO 的客户端查看"
+      // required 默认为 true
+    }
+  }.send()
+}
+```
+
 ## 编译与测试
 
 编译核心库并运行测试：
@@ -216,15 +253,22 @@ createTakina(registerAllComponents = false) {
 
 **运行冒烟测试**：
 支持环境变量组合启用单一能力测试验证
+（更多测试参数请查看源码）
 
 ```bash
 TAKINA_JID='alice@example.com' \
 TAKINA_PASSWORD='secret' \
-TAKINA_HOST='example.com' \
-TAKINA_PORT='5222' \
-TAKINA_SECURITY='START_TLS' \
-TAKINA_SMOKE_ROSTER=1 \
 ./gradlew :takina-examples:runSmokeClientExample
+```
+
+**运行 OMEMO 双账号私聊冒烟**：
+
+```bash
+TAKINA_A_JID='alice@example.com' \
+TAKINA_A_PASSWORD='secretA' \
+TAKINA_B_JID='bob@example.com' \
+TAKINA_B_PASSWORD='secretB' \
+./gradlew :takina-examples:runOmemoPrivateSmokeExample
 ```
 
 更多基础示例可查阅 `takina-examples` 下的代码

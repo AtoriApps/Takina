@@ -69,7 +69,7 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
         return TakinaInboundStanzaInterceptResult(stanzaType = stanzaType, xml = xml)
     }
 
-    fun rosterGet(
+    fun getAwait(
         from: Jid? = null,
         to: Jid? = null,
         version: String? = null,
@@ -81,6 +81,7 @@ class RosterComponent internal constructor(private val takina: AbstractTakina) :
             requestVersioning -> mapOf("ver" to "")
             else -> emptyMap()
         }
+
         return PendingIqAwaitRequest(
             takina = takina,
             timeoutMillis = timeoutMillis,

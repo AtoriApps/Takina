@@ -9,6 +9,7 @@ import org.atoriapps.takina.core.components.HttpUploadComponent
 import org.atoriapps.takina.core.components.MamComponent
 import org.atoriapps.takina.core.components.MessageReceiptsComponent
 import org.atoriapps.takina.core.components.MucComponent
+import org.atoriapps.takina.core.components.OmemoComponent
 import org.atoriapps.takina.core.components.RosterComponent
 import org.atoriapps.takina.core.components.StreamManagementComponent
 import org.atoriapps.takina.core.components.TakinaComponent
@@ -72,6 +73,7 @@ class TakinaConfiguration {
         registerComponent(MamComponent)
         registerComponent(MessageReceiptsComponent)
         registerComponent(MucComponent)
+        registerComponent(OmemoComponent)
         registerComponent(RosterComponent)
         registerComponent(StreamManagementComponent)
     }

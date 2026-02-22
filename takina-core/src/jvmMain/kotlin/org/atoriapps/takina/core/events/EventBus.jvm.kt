@@ -43,7 +43,7 @@ actual class TakinaEventBus actual constructor(context: TakinaContext) : Abstrac
     override fun emit(takinaEvent: TakinaEvent) {
         val eventType = takinaEvent::class
 
-        LogUtils.debug(TAG, "发射事件", eventType.clzName, takinaEvent.description)
+        if (enableEventLog) LogUtils.debug(TAG, "事件触发", eventType.clzName, takinaEvent.description)
 
         when (mode) {
             Mode.Inline -> handlers[eventType]?.forEach { dispatchHandler(takinaEvent, it) }
@@ -52,13 +52,13 @@ actual class TakinaEventBus actual constructor(context: TakinaContext) : Abstrac
         }
     }
 
-    // 关闭事件总线（清理资源）
+    // 关闭事件总线（清理资源） HACK：不应该让外部能访问吧
     override fun shutdown() {
         scope.cancel()
         handlers.clear()
     }
 
     private fun dispatchHandler(event: TakinaEvent, handler: TakinaEventHandler<TakinaEvent>) {
-        runCatching { handler.onEvent(event, context) }.onFailure { e -> LogUtils.error(TAG, "事件处理异常", event::class.clzName, e.message ?: "未知错误") }
+        runCatching { handler.onEvent(event, context) }.onFailure { e -> if (enableEventLog) LogUtils.error(TAG, "事件处理异常", event::class.clzName, e.message ?: "未知错误") }
     }
 }

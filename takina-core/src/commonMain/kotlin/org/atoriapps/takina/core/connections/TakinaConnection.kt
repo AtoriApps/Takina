@@ -25,6 +25,11 @@ class TakinaConnection(
         oldStage: ConnectionLifecycleStage,
         newStage: ConnectionLifecycleStage,
     ) -> Unit = { _, _, _ -> },
+    private val onTryPreBindNegotiation: (
+        connection: TakinaConnection,
+        featuresXml: String,
+        transport: PreBindNegotiationTransport,
+    ) -> PreBindNegotiationResult = { _, _, _ -> PreBindNegotiationResult.SKIPPED },
 ) {
     companion object {
         private const val TAG = "Takina连接"
@@ -133,14 +138,16 @@ class TakinaConnection(
             openStreamAndReadFeatures(createdConnector).also { refreshed ->
                 lastFeaturesXml = refreshed
             }
-            bindResource(createdConnector)
+
+            val preBindNegotiationResult = runPreBindNegotiation(createdConnector, lastFeaturesXml.orEmpty())
+            if (preBindNegotiationResult != PreBindNegotiationResult.ACCEPTED) bindResource(createdConnector)
 
             connector = createdConnector
             state = ConnectionState.CONNECTED
             moveLifecycle(
                 target = ConnectionLifecycleStage.ONLINE,
-                allowedFrom = setOf(ConnectionLifecycleStage.RESOURCE_BOUND),
-                reason = "资源绑定完成并已上线",
+                allowedFrom = setOf(ConnectionLifecycleStage.RESOURCE_BOUND, ConnectionLifecycleStage.STREAM_OPENED),
+                reason = if (preBindNegotiationResult == PreBindNegotiationResult.ACCEPTED) "流管理恢复成功并已上线" else "资源绑定完成并已上线",
             )
             createdConnector.startFramePump(
                 onFrame = { frame -> handleIncomingFrame(frame) },
@@ -270,6 +277,21 @@ class TakinaConnection(
             message = "资源绑定超时，请检查网络或服务端状态",
             kind = ConnectionFailureKind.NETWORK_TIMEOUT,
             detail = "resource binding timeout for account $boundJid",
+        )
+    }
+
+    private fun runPreBindNegotiation(connector: AbstractConnector, featuresXml: String): PreBindNegotiationResult {
+        if (featuresXml.isBlank()) return PreBindNegotiationResult.SKIPPED
+        return onTryPreBindNegotiation(
+            this,
+            featuresXml,
+            object : PreBindNegotiationTransport {
+                override fun sendRawFrame(xml: String) {
+                    sendFrame(connector, xml)
+                }
+
+                override fun readFrame(timeoutMillis: Int): String = this@TakinaConnection.readFrame(connector, timeoutMillis)
+            },
         )
     }
 
@@ -451,3 +473,15 @@ abstract class AbstractConnector {
 }
 
 expect class Connector() : AbstractConnector
+
+enum class PreBindNegotiationResult {
+    SKIPPED,
+    ACCEPTED,
+    FALLBACK_TO_BIND,
+}
+
+interface PreBindNegotiationTransport {
+    fun sendRawFrame(xml: String)
+
+    fun readFrame(timeoutMillis: Int): String
+}

@@ -10,7 +10,10 @@ import org.atoriapps.takina.core.components.TakinaInboundFrameInterceptor
 import org.atoriapps.takina.core.components.TakinaInboundStanzaInterceptor
 import org.atoriapps.takina.core.components.TakinaOutboundFrameInterceptor
 import org.atoriapps.takina.core.components.TakinaOutboundFrameObserver
+import org.atoriapps.takina.core.components.TakinaPreBindNegotiationComponent
 import org.atoriapps.takina.core.connections.IqResult
+import org.atoriapps.takina.core.connections.PreBindNegotiationResult
+import org.atoriapps.takina.core.connections.PreBindNegotiationTransport
 import org.atoriapps.takina.core.connections.TakinaConnection
 import org.atoriapps.takina.core.connections.ConnectionLifecycleStage
 import org.atoriapps.takina.core.events.AllConnectedEvent
@@ -196,6 +199,9 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
                 },
                 onLifecycleStageChanged = { connection, oldStage, newStage ->
                     handleConnectionStageChanged(connection, oldStage, newStage)
+                },
+                onTryPreBindNegotiation = { connection, featuresXml, transport ->
+                    dispatchTryPreBindNegotiation(connection, featuresXml, transport)
                 },
             )
         }
@@ -414,6 +420,21 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
                 LogUtils.error(TAG, "组件阶段变化回调异常", component::class.clzName, error.message ?: "未知错误")
             }
         }
+    }
+
+    private fun dispatchTryPreBindNegotiation(
+        connection: TakinaConnection,
+        featuresXml: String,
+        transport: PreBindNegotiationTransport,
+    ): PreBindNegotiationResult {
+        for (component in orderedComponents) {
+            val negotiation = component as? TakinaPreBindNegotiationComponent ?: continue
+            val result = runCatching { negotiation.tryPreBindNegotiation(connection, featuresXml, transport, this) }
+                .onFailure { error -> LogUtils.error(TAG, "组件预绑定协商回调异常", component::class.clzName, error.message ?: "未知错误") }
+                .getOrNull() ?: continue
+            if (result != PreBindNegotiationResult.SKIPPED) return result
+        }
+        return PreBindNegotiationResult.SKIPPED
     }
 
     private fun shutdownInstalledComponents() {

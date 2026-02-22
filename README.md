@@ -33,7 +33,7 @@ Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，
 * `CapabilitiesComponent`：XEP-0115 caps 节点构造与 presence 载荷解析
 * `CarbonsComponent`：XEP-0280 Carbons 启用/关闭与转发消息解析
 * `MessageReceiptsComponent`：XEP-0184 回执请求/确认载荷构造、消息解析与自动回执策略
-* `StreamManagementComponent`：XEP-0198 基础模型（帧解析、计数跟踪、自动确认、重连恢复、恢复握手窗口暂缓普通 stanza）
+* `StreamManagementComponent`：XEP-0198 基础模型（帧解析、计数跟踪、自动确认、重连恢复、恢复握手窗口暂缓普通 stanza、SASL 后先 resume 失败再 bind+enable）
 * `RosterComponent`：RFC 6121 roster 拉取与增删改、group 解析、订阅流程与 push 来源校验
 * `MamComponent`：XEP-0313 + XEP-0059 查询构造、分页参数、结果聚合与游标辅助
 * `MucComponent`：XEP-0045 群聊进出与消息，XEP-0249 邀请，XEP-0402 Bookmarks 2 操作
@@ -48,7 +48,6 @@ Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，
 协议实现进度、各项能力明细与待办优先级，请查阅以下清单：
 * [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md)
 
-截至 2026-02-21，P0 优先能力已进入“基本完成”阶段，后续以边界严格化和跨服务端兼容性优化为主
 如果您对功能或需要支持的 RFC/XEP 有任何建议，欢迎提交 Issue 告诉我们
 
 ## 快速上手
@@ -110,7 +109,7 @@ println(disco.type)
 takina.disconnectAll()
 ``` 
 
-### 2. 消息回执 (自动/手动)
+### 2. 消息回执（自动/手动）
 
 `MessageReceiptsComponent` 默认开启自动回执；如需业务侧接管，可将其关闭并在入站事件中自行触发
 
@@ -130,7 +129,7 @@ val selfFullJid = createFullJid(
 
 takina.events.on(StanzaReceivedEvent) { event ->
   if (event.stanzaType != "message") return@on
-  val sent = takina.receipts().sendReceivedReply(
+  val sent = takina.receipts.sendReceivedReply(
     selfJid = selfFullJid,
     inboundMessageXml = event.xml,
   )
@@ -141,7 +140,7 @@ takina.events.on(StanzaReceivedEvent) { event ->
 }
 ```
 
-### 3. Message Carbons (XEP-0280)
+### 3. Message Carbons（XEP-0280）
 
 在注册组件时进行接收器配置：
 
@@ -161,12 +160,12 @@ createTakina(registerAllComponents = false) {
 // 解析多端同步消息
 takina.events.on(StanzaReceivedEvent) { event ->
   if (event.stanzaType != "message") return@on
-  val carbon = takina.carbons().parseEnvelope(event.xml) ?: return@on
+  val carbon = takina.carbons.parseEnvelope(event.xml) ?: return@on
   println("carbons=${carbon.frame} forwarded=${carbon.forwardedMessageXml}")
 }
 ```
 
-### 4. 流管理与跨进程恢复 (XEP-0198)
+### 4. 流管理与跨进程恢复（XEP-0198）
 
 您可以通过组件属性调优流管理的确认频率及重连机制：
 
@@ -181,7 +180,8 @@ createTakina(registerAllComponents = false) {
 }
 ```
 
-注：`StreamManagementComponent` 在发送 `<resume/>` 后，会暂缓普通 `message/presence/iq` 出站，直到收到 `<resumed/>` 或失败后新会话 `<enabled/>`，再按顺序补发，避免在恢复窗口提前发送“状态重建类 stanza”（如 `carbons enable`）导致恢复失败
+注：`StreamManagementComponent` 在发送 `<resume/>` 后，会暂缓普通 `message/presence/iq` 出站，直到收到 `<resumed/>` 或失败后新会话 `<enabled/>`，再按顺序补发，避免在恢复窗口提前发送“状态重建类 stanza”（如 `carbons enable`）导致恢复失败。重连时会在 `SASL 成功 + 新 stream features` 后优先尝试 `<resume/>`，只有收到 `<failed/>` 或恢复超时时才回退到资源绑定与新会话 enable
+实现上通过核心的“预绑定协商扩展点”接入该流程：未注册流管理组件时将直接走传统 `bind -> online`，不会隐式启用恢复语义
 
 **协作式持久化恢复**：
 因数据敏感，Takina 负责恢复流程控制，使用方负责状态的落地存储（DB、KV、加密等）

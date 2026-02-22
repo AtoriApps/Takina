@@ -2,6 +2,8 @@ package org.atoriapps.takina.core.components
 
 import org.atoriapps.takina.core.AbstractTakina
 import org.atoriapps.takina.core.TakinaContext
+import org.atoriapps.takina.core.connections.PreBindNegotiationResult
+import org.atoriapps.takina.core.connections.PreBindNegotiationTransport
 import org.atoriapps.takina.core.connections.TakinaConnection
 import org.atoriapps.takina.core.components.TakinaFrameInterceptAction.DROP
 import org.atoriapps.takina.core.exceptions.TakinaConnectionException
@@ -14,7 +16,7 @@ import kotlin.math.min
 
 class StreamManagementComponent internal constructor(
     private val takina: AbstractTakina,
-) : TakinaConnectionLifecycleComponent, TakinaInboundFrameInterceptor, TakinaInboundStanzaInterceptor, TakinaOutboundFrameObserver, TakinaOutboundFrameInterceptor {
+) : TakinaConnectionLifecycleComponent, TakinaPreBindNegotiationComponent, TakinaInboundFrameInterceptor, TakinaInboundStanzaInterceptor, TakinaOutboundFrameObserver, TakinaOutboundFrameInterceptor {
     companion object : TakinaComponentProvider<StreamManagementComponent> {
         private const val TAG = "流管理组件"
 
@@ -45,27 +47,73 @@ class StreamManagementComponent internal constructor(
         if (!connection.supportsStreamManagement) return LogUtils.debug(TAG, "服务端没说支持流管理，跳过协商", connection.boundJid)
         val state = stateFor(connection.boundJid)
         resetReconnectAttempts(state)
-        if (isResumeExpired(state)) {
-            LogUtils.warn(TAG, "流管理会话已过期，放弃 resume，改为 enable", connection.boundJid)
-            invalidateSessionForEnable(state)
-        }
-        val previousId = state.sessionId
-        val canResume = state.enabled && state.allowResume && !previousId.isNullOrBlank()
-
-        if (canResume) {
-            runCatching {
-                markResumeRequested(state, previousId)
-                sendResume(from = connection.boundJid, previousId = previousId, handledByClient = state.inboundHandledCount)
-                LogUtils.debug(TAG, "已发送流管理 resume", connection.boundJid, "previd=$previousId", "h=${state.inboundHandledCount}")
-            }.onFailure { error ->
-                LogUtils.warn(TAG, "发送流管理 resume 失败，回退 enable", connection.boundJid, error.message ?: "未知错误")
-                sendEnableInternal(connection.boundJid)
-            }
-
-            return
-        }
-
+        if (isSessionResumed(state)) return LogUtils.warn(TAG, "流管理已在绑定前恢复完成，跳过 enable", connection.boundJid)
+        if (isEnableInFlight(state)) return LogUtils.debug(TAG, "流管理 enable 已发送，等待服务端响应", connection.boundJid)
         sendEnableInternal(connection.boundJid)
+    }
+
+    override fun tryPreBindNegotiation(
+        connection: TakinaConnection,
+        featuresXml: String,
+        transport: PreBindNegotiationTransport,
+        context: TakinaContext,
+    ): PreBindNegotiationResult {
+        if (!containsSmNamespace(featuresXml)) return PreBindNegotiationResult.SKIPPED
+        val state = stateFor(connection.boundJid)
+        if (isResumeExpired(state)) {
+            LogUtils.warn(TAG, "流管理会话已过期，放弃 resume，改为新会话", connection.boundJid)
+            invalidateSessionForEnable(state)
+            return PreBindNegotiationResult.SKIPPED
+        }
+
+        val previousId = synchronized(state) { state.sessionId }
+        val handledByClient = synchronized(state) { state.inboundHandledCount }
+        val canResume = synchronized(state) { state.enabled && state.allowResume && !state.sessionId.isNullOrBlank() }
+        if (!canResume) return PreBindNegotiationResult.SKIPPED
+        if (previousId.isNullOrBlank()) return PreBindNegotiationResult.SKIPPED
+
+        return runCatching {
+            markResumeRequested(state, previousId)
+            transport.sendRawFrame(resume(previousId = previousId, handledByClient = handledByClient).toXmlString())
+            LogUtils.warn(TAG, "已在绑定前发送流管理 resume", connection.boundJid, "previd=$previousId", "h=$handledByClient")
+            repeat(20) {
+                val frameXml = transport.readFrame(connection.config.connectTimeoutMillis)
+                val frame = onInboundFrame(connection.boundJid, frameXml) ?: return@repeat
+                when (frame) {
+                    is InboundFrame.Resumed -> {
+                        if (!isResumedFrameConsistent(state, frame)) {
+                            LogUtils.warn(TAG, "流管理 resumed 的 previd 不一致，回退新会话", connection.boundJid, "expected=${state.lastResumePreviousId}", "actual=${frame.previousId}")
+                            invalidateSessionForEnable(state)
+                            return PreBindNegotiationResult.FALLBACK_TO_BIND
+                        }
+                        LogUtils.warn(TAG, "流管理绑定前恢复成功", connection.boundJid, "acked=${frame.handledByServer}")
+                        replayUnackedAfterResume(connection.boundJid, state) { xml -> transport.sendRawFrame(xml) }
+                        return PreBindNegotiationResult.ACCEPTED
+                    }
+
+                    is InboundFrame.Failed -> {
+                        LogUtils.warn(TAG, "流管理绑定前恢复失败，回退新会话", connection.boundJid, "acked=${frame.handledByServer ?: "<none>"}")
+                        return PreBindNegotiationResult.FALLBACK_TO_BIND
+                    }
+
+                    InboundFrame.AckRequest -> {
+                        transport.sendRawFrame(ack(state.inboundHandledCount).toXmlString())
+                        LogUtils.debug(TAG, "绑定前收到服务端 Ack 请求并已响应", connection.boundJid, "h=${state.inboundHandledCount}")
+                    }
+
+                    is InboundFrame.Acknowledged ->
+                        LogUtils.debug(TAG, "绑定前收到服务端确认", connection.boundJid, "acked=${frame.handledByServer}")
+
+                    is InboundFrame.Enabled ->
+                        LogUtils.warn(TAG, "绑定前收到 unexpected enabled，继续等待 resume 结果", connection.boundJid, "sessionId=${frame.id ?: "<none>"}")
+                }
+            }
+            LogUtils.warn(TAG, "流管理绑定前恢复等待超限，回退新会话", connection.boundJid)
+            PreBindNegotiationResult.FALLBACK_TO_BIND
+        }.getOrElse { error ->
+            LogUtils.warn(TAG, "流管理绑定前恢复异常，回退新会话", connection.boundJid, error.message ?: "未知错误")
+            PreBindNegotiationResult.FALLBACK_TO_BIND
+        }
     }
 
     override fun onBeforeDisconnect(jid: BareJid, context: TakinaContext) {
@@ -257,7 +305,7 @@ class StreamManagementComponent internal constructor(
         val state = stateFor(connection.boundJid)
         val replay = consumePendingReplayAfterEnable(state)
         if (replay.isEmpty()) {
-            replayDeferredAfterSmReady(connection, state)
+            replayDeferredAfterSmReady(connection.boundJid, state) { xml -> takina.sendRaw(connection.boundJid, xml) }
             return
         }
         LogUtils.warn(TAG, "流管理新会话需要重放", "count=${replay.size}")
@@ -268,7 +316,7 @@ class StreamManagementComponent internal constructor(
                 sentCount = index + 1
             }
             LogUtils.warn(TAG, "流管理新会话重放完成", connection.boundJid)
-            replayDeferredAfterSmReady(connection, state)
+            replayDeferredAfterSmReady(connection.boundJid, state) { xml -> takina.sendRaw(connection.boundJid, xml) }
         }.onFailure { error ->
             val unsent = replay.drop(sentCount)
             prependPendingReplayAfterEnable(state, unsent)
@@ -278,34 +326,38 @@ class StreamManagementComponent internal constructor(
 
     private fun replayUnackedAfterResume(connection: TakinaConnection) {
         val state = stateFor(connection.boundJid)
+        replayUnackedAfterResume(connection.boundJid, state) { xml -> takina.sendRaw(connection.boundJid, xml) }
+    }
+
+    private fun replayUnackedAfterResume(jid: BareJid, state: SessionState, sender: (String) -> Unit) {
         val replay = snapshotUnackedForResume(state)
         if (replay.isEmpty()) {
-            replayDeferredAfterSmReady(connection, state)
+            replayDeferredAfterSmReady(jid, state, sender)
             return
         }
         scheduleResumeReplay(state, replay)
         runCatching {
-            replay.forEach { xml -> takina.sendRaw(connection.boundJid, xml) }
-            LogUtils.warn(TAG, "流管理会话恢复后重放完成", connection.boundJid, "count=${replay.size}")
-            replayDeferredAfterSmReady(connection, state)
-        }.onFailure { error -> LogUtils.warn(TAG, "流管理会话恢复后重放失败", connection.boundJid, error.message ?: "未知错误") }
+            replay.forEach { xml -> sender(xml) }
+            LogUtils.warn(TAG, "流管理会话恢复后重放完成", jid, "count=${replay.size}")
+            replayDeferredAfterSmReady(jid, state, sender)
+        }.onFailure { error -> LogUtils.warn(TAG, "流管理会话恢复后重放失败", jid, error.message ?: "未知错误") }
     }
 
-    private fun replayDeferredAfterSmReady(connection: TakinaConnection, state: SessionState) {
+    private fun replayDeferredAfterSmReady(jid: BareJid, state: SessionState, sender: (String) -> Unit) {
         val deferred = consumeDeferredOutbound(state)
         if (deferred.isEmpty()) return
-        LogUtils.warn(TAG, "流管理握手后开始补发暂缓的 stanza", connection.boundJid, "count=${deferred.size}")
+        LogUtils.warn(TAG, "流管理握手后开始补发暂缓的 stanza", jid, "count=${deferred.size}")
         var sentCount = 0
         runCatching {
             deferred.forEachIndexed { index, xml ->
-                takina.sendRaw(connection.boundJid, xml)
+                sender(xml)
                 sentCount = index + 1
             }
-            LogUtils.warn(TAG, "流管理握手后暂缓的 stanza 补发完成", connection.boundJid)
+            LogUtils.warn(TAG, "流管理握手后暂缓的 stanza 补发完成", jid)
         }.onFailure { error ->
             val unsent = deferred.drop(sentCount)
             prependDeferredOutbound(state, unsent)
-            LogUtils.warn(TAG, "流管理握手后暂缓的 stanza 补发中断", connection.boundJid, "已发送=$sentCount", "剩余=${unsent.size}", error.message ?: "未知错误")
+            LogUtils.warn(TAG, "流管理握手后暂缓的 stanza 补发中断", jid, "已发送=$sentCount", "剩余=${unsent.size}", error.message ?: "未知错误")
         }
     }
 
@@ -510,6 +562,13 @@ class StreamManagementComponent internal constructor(
         applyInboundFrame(stateFor(jid), frame)
         return frame
     }
+
+    private fun containsSmNamespace(featuresXml: String): Boolean =
+        Regex("""<\s*sm\b[^>]*xmlns\s*=\s*['"]urn:xmpp:sm:3['"][^>]*/?>""").containsMatchIn(featuresXml)
+
+    private fun isSessionResumed(state: SessionState): Boolean = synchronized(state) { state.enabled && state.resumed }
+
+    private fun isEnableInFlight(state: SessionState): Boolean = synchronized(state) { state.enableRequested }
 
     private fun isSmNamespace(attributes: Map<String, String>): Boolean =
         if (attributes["xmlns"] == NAMESPACE) true

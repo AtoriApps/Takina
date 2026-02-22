@@ -4,6 +4,8 @@ package org.atoriapps.takina.core.components
 
 import org.atoriapps.takina.core.TakinaContext
 import org.atoriapps.takina.core.connections.ConnectionLifecycleStage
+import org.atoriapps.takina.core.connections.PreBindNegotiationResult
+import org.atoriapps.takina.core.connections.PreBindNegotiationTransport
 import org.atoriapps.takina.core.connections.TakinaConnection
 import org.atoriapps.takina.core.xmpp.BareJid
 import kotlin.reflect.KClass
@@ -33,6 +35,15 @@ interface TakinaConnectionLifecycleComponent : TakinaComponent {
         newStage: ConnectionLifecycleStage,
         context: TakinaContext,
     ) {}
+}
+
+interface TakinaPreBindNegotiationComponent : TakinaComponent {
+    fun tryPreBindNegotiation(
+        connection: TakinaConnection,
+        featuresXml: String,
+        transport: PreBindNegotiationTransport,
+        context: TakinaContext,
+    ): PreBindNegotiationResult = PreBindNegotiationResult.SKIPPED
 }
 
 enum class TakinaFrameInterceptAction {

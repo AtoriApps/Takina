@@ -1,6 +1,6 @@
 # Takina 协议实现状态
 
-> 最后更新：2026-02-21
+> 最后更新：2026-02-22
 > 本文档用于统一维护 Takina 的 RFC/XEP 实现进度与待办优先级
 
 ## 状态定义
@@ -35,7 +35,7 @@
 
 **【流管理与可靠性投递】**
 * **XEP-0198 Stream Management**：`StreamManagementComponent` 支持 enable/resume、状态跟踪、自动请求 ack、重连恢复与未确认消息防丢重放
-    * *补充说明*：已增加“恢复握手窗口普通 stanza 暂缓与握手后补发”策略，降低恢复窗口内并发业务 stanza 干扰导致的 resume 失败
+    * *补充说明*：已增加“恢复握手窗口普通 stanza 暂缓与握手后补发”策略，降低恢复窗口内并发业务 stanza 干扰导致的 resume 失败；并修正为 `SASL 成功后优先 resume`，仅在 `<failed/>`/超时后才回退 `bind + enable`；恢复链路通过核心“预绑定协商扩展点”接入，未注册组件时不生效
     * *剩余工作*：跨服务端兼容性回归（含 location 提示、不同失败码分支与长时间离线恢复边界）
 * **XEP-0184 Delivery Receipts**：`MessageReceiptsComponent` 支持回执请求/确认结构的构造解析，以及自动/手动回执 API
 

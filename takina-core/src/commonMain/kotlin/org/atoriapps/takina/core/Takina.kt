@@ -20,6 +20,7 @@ import org.atoriapps.takina.core.events.ConnectionConnectedEvent
 import org.atoriapps.takina.core.events.ConnectionFailedEvent
 import org.atoriapps.takina.core.events.ConnectionStageChangedEvent
 import org.atoriapps.takina.core.events.StanzaReceivedEvent
+import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.events.TakinaEventBus
 import org.atoriapps.takina.core.exceptions.AccountNotFoundException
 import org.atoriapps.takina.core.exceptions.AmbiguousAccountException
@@ -197,6 +198,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
                 },
             )
         }
+
         return synchronized(connection) {
             if (connection.state == TakinaConnection.ConnectionState.CONNECTED) return@synchronized false
             try {
@@ -256,9 +258,13 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
 
     private fun handleInboundFrame(connection: TakinaConnection, xml: String) {
         applyInboundFrameInterceptors(connection, xml)
+        events.emit(StanzaReceivedEvent(connection.boundJid, intercepted.first, intercepted.second))
     }
 
-    private fun handleOutboundFrame(connection: TakinaConnection, xml: String) = dispatchOutboundFrameSent(connection, xml)
+    private fun handleOutboundFrame(connection: TakinaConnection, xml: String) {
+        dispatchOutboundFrameSent(connection, xml)
+        events.emit(FrameOutboundEvent(connection.boundJid,  xml))
+    }
 
     private fun handleConnectionClosed(connection: TakinaConnection, reason: String) {
         LogUtils.warn(TAG, "连接已关闭", connection.boundJid, reason)

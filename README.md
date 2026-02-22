@@ -66,7 +66,7 @@ val takina = createTakina {
   // 添加第一个账号
   addAccount {
     jid = demoUserJid
-    password = "replace-with-real-password"
+    password = "replace-with-real-password" // 支持字段直接赋值
     
     // endpoint 可缺省，库将自动推导
     endpoint {
@@ -82,6 +82,8 @@ val takina = createTakina {
     password { "replace-with-real-password" }
   }
 }
+
+// 连接端点参数（host / port / securityMode）统一通过 endpoint 配置
 
 // 监听连接事件
 takina.events.on(AllConnectedEvent) {

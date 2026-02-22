@@ -78,9 +78,12 @@ class TakinaConfiguration {
 
     fun addAccount(init: AccountConfiguration.() -> Unit) {
         val config = AccountConfiguration().apply(init)
+
         val jid = config.jid?.bareJid ?: throw IllegalArgumentException("账号 JID 不能为空")
         config.requirePasswordProvider()
+
         require(accountConfigurations.none { it.jid?.bareJid == jid }) { "账号 $jid 已被添加" }
+
         LogUtils.debug(TAG, "添加账号", jid)
         accountConfigurations += config
     }
@@ -96,80 +99,65 @@ class TakinaConfiguration {
         init: COMPONENT.(TakinaContext) -> Unit,
     ) {
         val clz = provider.getComponentType()
+
         val configuration = componentConfigurations.find { it.clz == clz } as ComponentConfigurationPair<COMPONENT>?
             ?: throw IllegalArgumentException("组件 ${clz.clzName} 尚未注册")
+
         configuration.config.configurers += init
     }
 
     @TakinaConfigDsl
     class AccountConfiguration {
+        // 默认设置
+        companion object {
+            private const val DEFAULT_RESOURCE = "takina"
+            private const val DEFAULT_TIMEOUT_MILLIS = 10_000
+            private const val DEFAULT_LANGUAGE = "en"
+        }
+
         var jid: Jid?
             get() = jidProvider?.invoke()
             set(value) {
                 jidProvider = { value }
             }
 
-        var host: String?
-            get() = hostProvider?.invoke()
+        var password: String?
+            get() = passwordProvider?.invoke()
             set(value) {
-                hostProvider = { value }
-            }
-
-        var port: Int?
-            get() = portProvider?.invoke()
-            set(value) {
-                portProvider = { value }
-            }
-
-        var securityMode: SecurityMode
-            get() = securityModeProvider?.invoke() ?: SecurityMode.START_TLS
-            set(value) {
-                securityModeProvider = { value }
+                passwordProvider = value?.let { { it } }
             }
 
         var resource: String
-            get() = resourceProvider?.invoke() ?: "takina"
+            get() = resourceProvider?.invoke() ?: DEFAULT_RESOURCE
             set(value) {
                 resourceProvider = { value }
             }
 
         var connectTimeoutMillis: Int
-            get() = connectTimeoutMillisProvider?.invoke() ?: 10_000
+            get() = connectTimeoutMillisProvider?.invoke() ?: DEFAULT_TIMEOUT_MILLIS
             set(value) {
                 connectTimeoutMillisProvider = { value }
             }
 
         var streamLanguage: String
-            get() = streamLanguageProvider?.invoke() ?: "en"
+            get() = streamLanguageProvider?.invoke() ?: DEFAULT_LANGUAGE
             set(value) {
                 streamLanguageProvider = { value }
             }
 
         private var jidProvider: (() -> Jid?)? = null
-        private var hostProvider: (() -> String?)? = null
-        private var portProvider: (() -> Int?)? = null
-        private var securityModeProvider: (() -> SecurityMode)? = { SecurityMode.START_TLS }
-        private var resourceProvider: (() -> String)? = { "takina" }
-        private var connectTimeoutMillisProvider: (() -> Int)? = { 10_000 }
-        private var streamLanguageProvider: (() -> String)? = { "en" }
+        private var passwordProvider: (() -> String)? = null
+        private var resourceProvider: (() -> String)? = null
+        private var connectTimeoutMillisProvider: (() -> Int)? = null
+        private var streamLanguageProvider: (() -> String)? = null
         private var endpointProvider: (() -> EndpointValues)? = null
-
-        private var passwordProviderCallback: (() -> String)? = null
 
         fun jid(provider: () -> Jid?) {
             jidProvider = provider
         }
 
-        fun host(provider: () -> String?) {
-            hostProvider = provider
-        }
-
-        fun port(provider: () -> Int?) {
-            portProvider = provider
-        }
-
-        fun securityMode(provider: () -> SecurityMode) {
-            securityModeProvider = provider
+        fun password(provider: () -> String) {
+            passwordProvider = provider
         }
 
         fun resource(provider: () -> String) {
@@ -184,31 +172,24 @@ class TakinaConfiguration {
             streamLanguageProvider = provider
         }
 
-        fun password(callback: () -> String) {
-            passwordProviderCallback = callback
-        }
-
-        fun endpoint(host: String, port: Int? = null, securityMode: SecurityMode = this.securityMode) {
+        fun endpoint(host: String, port: Int? = null, securityMode: SecurityMode = SecurityMode.START_TLS) {
             endpointProvider = {
                 EndpointValues(
                     host = host,
                     port = port,
-                    securityMode = securityMode,
+                    securityMode = securityMode
                 )
             }
         }
 
-        fun endpointValues(provider: () -> EndpointValues) {
-            endpointProvider = provider
-        }
+        fun endpoint(init: EndpointConfiguration.() -> Unit) {
+            val builder = EndpointConfiguration().apply(init)
 
-        fun endpoint(init: EndpointBuilder.() -> Unit) {
-            val builder = EndpointBuilder().apply(init)
             endpointProvider = {
                 EndpointValues(
                     host = builder.host,
                     port = builder.port,
-                    securityMode = builder.securityMode,
+                    securityMode = builder.securityMode
                 )
             }
         }
@@ -216,23 +197,23 @@ class TakinaConfiguration {
         internal fun resolveConnectionConfig(): ConnectionConfig {
             val bareJid = jid?.bareJid ?: throw IllegalStateException("账号 JID 不能为空")
             val endpoint = endpointProvider?.invoke()
-            val mode = endpoint?.securityMode ?: securityMode
+            val mode = endpoint?.securityMode ?: SecurityMode.START_TLS
+
             return ConnectionConfig(
                 jid = bareJid,
-                host = endpoint?.host ?: host ?: bareJid.domain,
+                host = endpoint?.host ?: bareJid.domain,
                 securityMode = mode,
-                port = endpoint?.port ?: port ?: mode.defaultPort,
+                port = endpoint?.port ?: mode.defaultPort,
                 resource = resource,
                 connectTimeoutMillis = connectTimeoutMillis,
                 streamLanguage = streamLanguage,
             )
         }
 
-        internal fun requirePasswordProvider(): () -> String =
-            passwordProviderCallback ?: throw IllegalStateException("账号 ${jid?.bareJid ?: "<unknown>"} 的密码提供者不能为空")
+        internal fun requirePasswordProvider(): () -> String = passwordProvider ?: throw IllegalStateException("账号 ${jid?.bareJid ?: "<unknown>"} 的密码提供者不能为空")
 
         @TakinaConfigDsl
-        class EndpointBuilder {
+        class EndpointConfiguration {
             var host: String?
                 get() = hostProvider?.invoke()
                 set(value) {

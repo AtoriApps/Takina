@@ -2,7 +2,6 @@ package org.atoriapps.takina.core.events
 
 import org.atoriapps.takina.core.connections.ConnectionLifecycleStage
 import org.atoriapps.takina.core.xmpp.BareJid
-import kotlin.reflect.KClass
 
 class ConnectionConnectedEvent(val jid: BareJid) : TakinaEvent() {
     override val description = "账号=$jid"
@@ -56,6 +55,18 @@ class StanzaReceivedEvent(
     companion object : TakinaEventDescriber<StanzaReceivedEvent> {
         override val eventTokens = listOf("stanza", "received")
         override val eventType = StanzaReceivedEvent::class
+    }
+}
+
+class FrameOutboundEvent(
+    val jid: BareJid,
+    val xml: String,
+) : TakinaEvent() {
+    override val description: String = "账号=$jid"
+
+    companion object : TakinaEventDescriber<FrameOutboundEvent> {
+        override val eventTokens = listOf("frame", "outbound")
+        override val eventType = FrameOutboundEvent::class
     }
 }
 

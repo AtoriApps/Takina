@@ -1,30 +1,15 @@
 package org.atoriapps.takina.examples
 
+import kotlinx.coroutines.runBlocking
+import org.atoriapps.takina.core.components.*
 import org.atoriapps.takina.core.connections.SecurityMode
-import org.atoriapps.takina.core.components.CarbonsComponent
-import org.atoriapps.takina.core.components.ConnectionDiscoveryComponent
-import org.atoriapps.takina.core.components.CsiPushComponent
-import org.atoriapps.takina.core.components.DiscoveryComponent
-import org.atoriapps.takina.core.components.HttpUploadComponent
-import org.atoriapps.takina.core.components.MamComponent
-import org.atoriapps.takina.core.components.MessageReceiptsComponent
-import org.atoriapps.takina.core.components.MucComponent
-import org.atoriapps.takina.core.components.RosterComponent
-import org.atoriapps.takina.core.components.StreamManagementComponent
-import org.atoriapps.takina.core.components.connectionDiscovery
-import org.atoriapps.takina.core.components.csiPush
-import org.atoriapps.takina.core.components.discovery
-import org.atoriapps.takina.core.components.httpUpload
-import org.atoriapps.takina.core.components.mam
-import org.atoriapps.takina.core.components.muc
-import org.atoriapps.takina.core.components.roster
 import org.atoriapps.takina.core.createTakina
 import org.atoriapps.takina.core.events.ConnectionClosedEvent
 import org.atoriapps.takina.core.events.ConnectionFailedEvent
 import org.atoriapps.takina.core.events.StanzaReceivedEvent
+import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.xmpp.createBareJid
 import org.atoriapps.takina.core.xmpp.toBareJid
-import kotlinx.coroutines.runBlocking
 
 /**
  * Usage (environment variables):
@@ -73,7 +58,8 @@ fun main() {
 
         addAccount {
             this.jid = jid
-            this.password { password }
+            this.password = password
+
             endpoint(host = host, port = port, securityMode = security)
             this.resource = resource
         }
@@ -81,7 +67,8 @@ fun main() {
 
     takina.events.on(ConnectionFailedEvent) { println("连接失败：${it.jid} -> ${it.reason}") }
     takina.events.on(ConnectionClosedEvent) { println("连接关闭：${it.jid} -> ${it.reason}") }
-    takina.events.on(StanzaReceivedEvent) { println("入站 ${it.stanzaType}：${it.xml}") }
+    takina.events.on(StanzaReceivedEvent) { println("入站：${it.xml}") }
+    takina.events.on(FrameOutboundEvent) { println("出站：${it.xml}") }
 
     takina.connectAll()
 
@@ -151,7 +138,7 @@ fun main() {
         println("xep-0156 json 解析到备用连接数=${endpoints.size}")
     }
 
-    println("已连接并执行基础冒烟，请等待入站 stanza...($smokeDurationSeconds 秒)")
+    println("已连接并执行基础冒烟，接下来是您的自由测试时间（$smokeDurationSeconds 秒）")
 
     Thread.sleep(smokeDurationSeconds * 1000L)
 

@@ -6,6 +6,7 @@ import org.atoriapps.takina.core.events.AllConnectedEvent
 import org.atoriapps.takina.core.events.ConnectionClosedEvent
 import org.atoriapps.takina.core.events.ConnectionFailedEvent
 import org.atoriapps.takina.core.events.StanzaReceivedEvent
+import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.xmpp.toBareJid
 
 fun main() {
@@ -42,7 +43,10 @@ fun main() {
         println("账号连接失败 ${it.jid}：${it.reason}")
     }
     takina.events.on(StanzaReceivedEvent) {
-        println("收到入站 ${it.stanzaType}（${it.jid}）：${it.xml}")
+        println("入站包（${it.jid}）：${it.xml}")
+    }
+    takina.events.on(FrameOutboundEvent) {
+        println("出站包（${it.jid}）：${it.xml}")
     }
     takina.events.on(ConnectionClosedEvent) {
         println("连接已关闭 ${it.jid}：${it.reason}")

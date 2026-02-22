@@ -75,12 +75,12 @@ class CommonInitTest {
             addAccount {
                 jid = "alice@example.com".toBareJid()
                 password { "password" }
-                securityMode = SecurityMode.PLAIN
+                endpoint(securityMode = SecurityMode.PLAIN, host = "example.com")
             }
             addAccount {
                 jid = "carol@example.com".toBareJid()
                 password { "password" }
-                securityMode = SecurityMode.PLAIN
+                endpoint(securityMode = SecurityMode.PLAIN, host = "example.com")
             }
         }
 
@@ -112,9 +112,11 @@ class CommonInitTest {
         cfg.addAccount {
             jid { "alice@$suffix.example.com".toBareJid() }
             password { "pw-$suffix" }
-            host { "xmpp.$suffix.example.com" }
-            port { 6000 }
-            securityMode { SecurityMode.DIRECT_TLS }
+            endpoint {
+                host { "xmpp.$suffix.example.com" }
+                port { 6000 }
+                securityMode { SecurityMode.DIRECT_TLS }
+            }
             resource { "resource-$suffix" }
             connectTimeoutMillis { 20_000 }
             streamLanguage { "zh" }
@@ -149,6 +151,18 @@ class CommonInitTest {
         assertEquals("custom.example.com", resolved.host)
         assertEquals(7443, resolved.port)
         assertEquals(SecurityMode.DIRECT_TLS, resolved.securityMode)
+    }
+
+    @Test
+    fun accountPassword_shouldSupportDirectFieldAssignment() {
+        val cfg = TakinaConfiguration()
+        cfg.addAccount {
+            jid = "alice@example.com".toBareJid()
+            password = "plain-password"
+        }
+
+        val provider = cfg.accountConfigurations.single().requirePasswordProvider()
+        assertEquals("plain-password", provider())
     }
 
     @Test

@@ -55,8 +55,8 @@ class StreamManagementComponent internal constructor(
         if (canResume) {
             runCatching {
                 markResumeRequested(state, previousId)
-                sendResume(from = connection.boundJid, previousId = previousId, handledByServer = state.lastServerAckCount)
-                LogUtils.debug(TAG, "已发送流管理 resume", connection.boundJid, "previd=$previousId", "h=${state.lastServerAckCount}")
+                sendResume(from = connection.boundJid, previousId = previousId, handledByClient = state.inboundHandledCount)
+                LogUtils.debug(TAG, "已发送流管理 resume", connection.boundJid, "previd=$previousId", "h=${state.inboundHandledCount}")
             }.onFailure { error ->
                 LogUtils.warn(TAG, "发送流管理 resume 失败，回退 enable", connection.boundJid, error.message ?: "未知错误")
                 sendEnableInternal(connection.boundJid)
@@ -197,16 +197,16 @@ class StreamManagementComponent internal constructor(
 
     fun resume(
         previousId: String,
-        handledByServer: Long,
+        handledByClient: Long,
     ): XmlElement {
         require(previousId.isNotBlank()) { "previousId 不能为空" }
-        require(handledByServer >= 0) { "handledByServer 不能小于 0" }
+        require(handledByClient >= 0) { "handledByClient 不能小于 0" }
         return XmlElement(
             name = "resume",
             namespace = NAMESPACE,
             attributes = mapOf(
                 "previd" to previousId,
-                "h" to handledByServer.toString(),
+                "h" to handledByClient.toString(),
             ),
         )
     }
@@ -234,8 +234,8 @@ class StreamManagementComponent internal constructor(
     fun sendResume(
         from: Jid? = null,
         previousId: String,
-        handledByServer: Long,
-    ) = takina.sendRaw(from, resume(previousId, handledByServer).toXmlString())
+        handledByClient: Long,
+    ) = takina.sendRaw(from, resume(previousId, handledByClient).toXmlString())
 
     fun sendAckRequest(from: Jid? = null) = takina.sendRaw(from, ackRequest().toXmlString())
 

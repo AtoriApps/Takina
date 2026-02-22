@@ -87,8 +87,8 @@ class TakinaConnection(
                     )
                 }
 
-                createdConnector.send(XmppStream.startTlsRequest())
-                val startTlsResponse = createdConnector.readFrame(config.connectTimeoutMillis)
+                sendFrame(createdConnector, XmppStream.startTlsRequest())
+                val startTlsResponse = readFrame(createdConnector, config.connectTimeoutMillis)
                 if (!XmppProtocol.isStartTlsProceed(startTlsResponse)) {
                     throw TakinaConnectionException(
                         message = "TLS 协商失败",
@@ -114,8 +114,8 @@ class TakinaConnection(
                 )
             }
 
-            createdConnector.send(XmppStream.authPlain(config.jid, passwordProvider()))
-            val authResult = createdConnector.readFrame(config.connectTimeoutMillis)
+            sendFrame(createdConnector, XmppStream.authPlain(config.jid, passwordProvider()))
+            val authResult = readFrame(createdConnector, config.connectTimeoutMillis)
             if (!XmppProtocol.isSaslSuccess(authResult)) {
                 val saslFailure = parseSaslFailure(authResult)
                 throw TakinaConnectionException(
@@ -168,7 +168,7 @@ class TakinaConnection(
         forceLifecycle(ConnectionLifecycleStage.DISCONNECTING)
         try {
             connector?.stopFramePump()
-            connector?.send(XmppStream.closingStream())
+            connector?.let { sendFrame(it, XmppStream.closingStream()) }
         } finally {
             runCatching { connector?.close() }
             connector = null
@@ -187,8 +187,7 @@ class TakinaConnection(
 
     fun sendRaw(xml: String) {
         val activeConnector = connector ?: throw NotConnectedException("account $boundJid is not connected")
-        activeConnector.send(xml)
-        onOutboundFrame(this, xml)
+        sendFrame(activeConnector, xml)
     }
 
     suspend fun sendIqAndAwaitResult(
@@ -217,12 +216,12 @@ class TakinaConnection(
     }
 
     private fun openStreamAndReadFeatures(connector: AbstractConnector): String {
-        connector.send(XmppStream.openingStream(config))
-        val firstFrame = connector.readFrame(config.connectTimeoutMillis)
+        sendFrame(connector, XmppStream.openingStream(config))
+        val firstFrame = readFrame(connector, config.connectTimeoutMillis)
         val firstRoot = XmppProtocol.rootName(firstFrame)
         val featuresXml = when (firstRoot) {
             "stream" -> {
-                val secondFrame = connector.readFrame(config.connectTimeoutMillis)
+                val secondFrame = readFrame(connector, config.connectTimeoutMillis)
                 XmppProtocol.expectRoot(secondFrame, "features", "expected stream features")
                 secondFrame
             }
@@ -244,9 +243,9 @@ class TakinaConnection(
 
     private fun bindResource(connector: AbstractConnector) {
         val requestId = IdUtils.newStanzaId("bind")
-        connector.send(XmppStream.bindResource(config.resource, requestId))
+        sendFrame(connector, XmppStream.bindResource(config.resource, requestId))
         repeat(20) {
-            val frame = connector.readFrame(config.connectTimeoutMillis)
+            val frame = readFrame(connector, config.connectTimeoutMillis)
             if (XmppProtocol.rootName(frame) != "iq") return@repeat
             val attrs = XmppProtocol.rootAttributes(frame)
             if (attrs["id"] != requestId) return@repeat
@@ -276,6 +275,7 @@ class TakinaConnection(
 
     private fun handleIncomingFrame(frame: String) {
         val root = XmppProtocol.rootName(frame)
+        onInboundFrame(this, frame)
         when (root) {
             "iq" -> {
                 completePendingIqIfMatched(frame)
@@ -286,7 +286,17 @@ class TakinaConnection(
             "stream" -> Unit
             else -> Unit
         }
-        if (root != "stream") onInboundFrame(this, frame)
+    }
+
+    private fun sendFrame(connector: AbstractConnector, xml: String) {
+        connector.send(xml)
+        onOutboundFrame(this, xml)
+    }
+
+    private fun readFrame(connector: AbstractConnector, timeoutMillis: Int): String {
+        val frame = connector.readFrame(timeoutMillis)
+        onInboundFrame(this, frame)
+        return frame
     }
 
     private fun completePendingIqIfMatched(frame: String) {

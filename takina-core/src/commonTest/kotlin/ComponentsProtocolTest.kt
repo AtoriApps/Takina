@@ -150,7 +150,7 @@ class ComponentsProtocolTest {
         )
         assertEquals(
             "<resume xmlns='urn:xmpp:sm:3' previd='sm-old' h='12'/>",
-            sm.resume(previousId = "sm-old", handledByServer = 12).toXmlString(),
+            sm.resume(previousId = "sm-old", handledByClient = 12).toXmlString(),
         )
         assertEquals("<r xmlns='urn:xmpp:sm:3'/>", sm.ackRequest().toXmlString())
         assertEquals("<a xmlns='urn:xmpp:sm:3' h='3'/>", sm.ack(3).toXmlString())

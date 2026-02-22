@@ -6,7 +6,7 @@ import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.createTakina
 import org.atoriapps.takina.core.events.ConnectionClosedEvent
 import org.atoriapps.takina.core.events.ConnectionFailedEvent
-import org.atoriapps.takina.core.events.StanzaReceivedEvent
+import org.atoriapps.takina.core.events.FrameInboundEvent
 import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.xmpp.createBareJid
 import org.atoriapps.takina.core.xmpp.toBareJid
@@ -67,7 +67,7 @@ fun main() {
 
     takina.events.on(ConnectionFailedEvent) { println("连接失败：${it.jid} -> ${it.reason}") }
     takina.events.on(ConnectionClosedEvent) { println("连接关闭：${it.jid} -> ${it.reason}") }
-    takina.events.on(StanzaReceivedEvent) { println("入站：${it.xml}") }
+    takina.events.on(FrameInboundEvent) { println("入站：${it.xml}") }
     takina.events.on(FrameOutboundEvent) { println("出站：${it.xml}") }
 
     takina.connectAll()

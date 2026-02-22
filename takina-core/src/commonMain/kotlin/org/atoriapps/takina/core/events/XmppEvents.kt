@@ -70,6 +70,18 @@ class FrameOutboundEvent(
     }
 }
 
+class FrameInboundEvent(
+    val jid: BareJid,
+    val xml: String,
+) : TakinaEvent() {
+    override val description: String = "账号=$jid"
+
+    companion object : TakinaEventDescriber<FrameInboundEvent> {
+        override val eventTokens = listOf("frame", "inbound")
+        override val eventType = FrameInboundEvent::class
+    }
+}
+
 class ConnectionClosedEvent(
     val jid: BareJid,
     val reason: String,

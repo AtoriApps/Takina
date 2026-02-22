@@ -19,6 +19,7 @@ import org.atoriapps.takina.core.events.ConnectionClosedEvent
 import org.atoriapps.takina.core.events.ConnectionConnectedEvent
 import org.atoriapps.takina.core.events.ConnectionFailedEvent
 import org.atoriapps.takina.core.events.ConnectionStageChangedEvent
+import org.atoriapps.takina.core.events.FrameInboundEvent
 import org.atoriapps.takina.core.events.StanzaReceivedEvent
 import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.events.TakinaEventBus
@@ -257,8 +258,8 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
     }
 
     private fun handleInboundFrame(connection: TakinaConnection, xml: String) {
+        events.emit(FrameInboundEvent(connection.boundJid, xml))
         applyInboundFrameInterceptors(connection, xml)
-        events.emit(StanzaReceivedEvent(connection.boundJid, intercepted.first, intercepted.second))
     }
 
     private fun handleOutboundFrame(connection: TakinaConnection, xml: String) {
@@ -311,6 +312,8 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         }
         return current
     }
+
+    // TIPS：入站有帧拦截器和节拦截器。而出站因为节是我方构造的，所以无节拦截器，只有帧拦截器
 
     private fun applyInboundFrameInterceptors(connection: TakinaConnection, xml: String): String? {
         var current = xml

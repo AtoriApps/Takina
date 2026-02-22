@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.atoriapps.takina.core.events.AllConnectedEvent
 import org.atoriapps.takina.core.events.ConnectionFailedEvent
+import org.atoriapps.takina.core.events.FrameInboundEvent
 import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.events.TakinaEventFlowBackpressure
 import org.atoriapps.takina.core.xmpp.toBareJid
@@ -49,6 +50,22 @@ class EventBusFlowTest {
         delay(20)
         takina.events.emit(FrameOutboundEvent("alice@example.com".toBareJid(), "<message id='m1'/>"))
         val event = withTimeout(1_000) { waiting.await() }
+        assertEquals("账号=alice@example.com", event.description)
+    }
+
+    @Test
+    fun frameInboundEvent_shouldSupportFlowAndDescription() = runBlocking {
+        val takina = createTakina(registerAllComponents = false) {
+            addAccount {
+                jid = "alice@example.com".toBareJid()
+                password { "password" }
+            }
+        }
+        val waiting = async { takina.events.flow(FrameInboundEvent).first() }
+        delay(20)
+        takina.events.emit(FrameInboundEvent("alice@example.com".toBareJid(), "<iq type='result'/>"))
+        val event = withTimeout(1_000) { waiting.await() }
+        assertEquals("<iq type='result'/>", event.xml)
         assertEquals("账号=alice@example.com", event.description)
     }
 

@@ -132,7 +132,7 @@ class StreamManagementComponent internal constructor(
             val err = result.exceptionOrNull()
             val kind = (err as? TakinaConnectionException)?.kind?.name ?: "UNKNOWN"
             LogUtils.warn(TAG, "流管理自动重连失败", jid, "attempt=$attempt", "kind=$kind", err?.message ?: "未知错误")
-            if (autoReconnectDelayMillis > 0 && shouldAutoReconnect(state)) runCatching { Thread.sleep(autoReconnectDelayMillis.toLong()) }
+            if (autoReconnectDelayMillis > 0 && shouldAutoReconnect(state)) runCatching { Thread.sleep(autoReconnectDelayMillis.toLong()) } // HACK：怎么能用Java API！！换成协程！
         }
         LogUtils.warn(TAG, "流管理自动重连次数已达上限", jid, "max=$autoReconnectMaxAttempts", "可调大 autoReconnectMaxAttempts/autoReconnectDelayMillis 后再试")
     }

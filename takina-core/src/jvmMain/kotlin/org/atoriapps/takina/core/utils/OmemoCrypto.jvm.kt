@@ -1,6 +1,5 @@
 package org.atoriapps.takina.core.utils
 
-import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.SecureRandom
@@ -35,10 +34,12 @@ actual object OmemoCrypto {
     }
 
     actual fun verify(publicKey: ByteArray, data: ByteArray, signature: ByteArray): Boolean {
-        val verifier = Signature.getInstance("SHA256withECDSA")
-        verifier.initVerify(KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(publicKey)))
-        verifier.update(data)
-        return verifier.verify(signature)
+        return runCatching {
+            val verifier = Signature.getInstance("SHA256withECDSA")
+            verifier.initVerify(KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(publicKey)))
+            verifier.update(data)
+            verifier.verify(signature)
+        }.getOrDefault(false)
     }
 
     actual fun deriveSharedSecret(privateKey: ByteArray, publicKey: ByteArray): ByteArray {

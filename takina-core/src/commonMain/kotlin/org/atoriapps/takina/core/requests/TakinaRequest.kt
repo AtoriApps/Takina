@@ -3,6 +3,7 @@ package org.atoriapps.takina.core.requests
 import org.atoriapps.takina.core.AbstractTakina
 import org.atoriapps.takina.core.TakinaConfigDsl
 import org.atoriapps.takina.core.components.OmemoComponent
+import org.atoriapps.takina.core.components.OmemoComponent.OmemoProtocolPreference
 import org.atoriapps.takina.core.connections.IqResult
 import org.atoriapps.takina.core.exceptions.InvalidRequestException
 import org.atoriapps.takina.core.xmpp.Jid
@@ -67,16 +68,16 @@ class PendingMessageRequest internal constructor(
             return
         }
 
-        when (encryptionConfig.method) {
-            EncryptionMethod.OMEMO -> sendOmemo(encryptionConfig)
+        when (val provider = encryptionConfig.provider) {
+            is OmemoEncryptionProvider -> sendOmemo(encryptionConfig, provider)
         }
     }
 
     fun toXml(): String = stanza.toXml()
 
-    private fun sendOmemo(config: MessageEncryptionRequest) {
+    private fun sendOmemo(config: MessageEncryptionRequest, provider: OmemoEncryptionProvider) {
         val plaintext = sourceBody?.takeIf { it.isNotBlank() }
-            ?: throw InvalidRequestException("message.body is required when encryption.method=OMEMO")
+            ?: throw InvalidRequestException("message.body is required when encryption.provider=Omemo")
 
         // TODO：自动解析
         val fromBare = stanza.from?.bareJid
@@ -97,6 +98,7 @@ class PendingMessageRequest internal constructor(
                 to = stanza.to.bareJid,
                 plaintext = plaintext,
                 messageType = stanza.type,
+                preference = provider.preferVersion,
             ).copy(
                 id = stanza.id,
                 from = stanza.from,
@@ -163,8 +165,8 @@ class MessageRequestBuilder {
         if (body.isNullOrBlank() && subject.isNullOrBlank()) {
             throw InvalidRequestException("message.body or message.subject is required")
         }
-        if (encryptionConfig?.method == EncryptionMethod.OMEMO && body.isNullOrBlank()) {
-            throw InvalidRequestException("message.body is required when encryption.method=OMEMO")
+        if (encryptionConfig?.provider is OmemoEncryptionProvider && body.isNullOrBlank()) {
+            throw InvalidRequestException("message.body is required when encryption.provider=Omemo")
         }
         return BuiltMessageRequest(
             stanza = MessageStanza(
@@ -188,24 +190,29 @@ data class BuiltMessageRequest(
     val encryption: MessageEncryptionRequest?,
 )
 
-enum class EncryptionMethod {
-    OMEMO,
-}
+sealed interface MessageEncryptionProvider
+
+data class OmemoEncryptionProvider(
+    val preferVersion: OmemoProtocolPreference = OmemoProtocolPreference.AUTO,
+) : MessageEncryptionProvider
+
+fun omemoProvider(preferVersion: OmemoProtocolPreference = OmemoProtocolPreference.AUTO): OmemoEncryptionProvider =
+    OmemoEncryptionProvider(preferVersion = preferVersion)
 
 data class MessageEncryptionRequest(
-    val method: EncryptionMethod,
+    val provider: MessageEncryptionProvider,
     val fallbackBody: String,
     val required: Boolean,
 )
 
 @TakinaConfigDsl
 class MessageEncryptionBuilder {
-    var method: EncryptionMethod? = null
+    var provider: MessageEncryptionProvider? = null
     var fallbackBody: String = "信息已加密，请使用支持 OMEMO 的客户端查看"
     var required: Boolean = true
 
     fun build(): MessageEncryptionRequest = MessageEncryptionRequest(
-        method = method ?: throw InvalidRequestException("message.encryption.method is required"),
+        provider = provider ?: throw InvalidRequestException("message.encryption.provider is required"),
         fallbackBody = fallbackBody,
         required = required,
     )

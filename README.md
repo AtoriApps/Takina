@@ -40,7 +40,7 @@ Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，
 * `CsiPushComponent`：XEP-0352 活跃状态切换 + XEP-0357 push 开关与发现解析
 * `HttpUploadComponent`：XEP-0363 slot 申请、URL 解析与上传错误处理
 * `ConnectionDiscoveryComponent`：XEP-0156 host-meta 备用连接解析与首选端点选择
-* `OmemoComponent`：XEP-0384 (OMEMO 2) 设备材料同步 + 端到端加解密（`urn:xmpp:omemo:2`）
+* `OmemoComponent`：XEP-0384 端到端加密（支持 `urn:xmpp:omemo:2` 与 `eu.siacs.conversations.axolotl`，默认 `AUTO` 协商，失败回退 `V1`）
 
 ## 功能进度
 
@@ -209,8 +209,14 @@ createTakina(registerAllComponents = false) {
 
 ### 5. OMEMO 私聊收发（XEP-0384）
 
-`OmemoComponent` 提供了设备材料发布、联系人材料同步、消息加密与解密能力。当前实现采用真实密码学链路（ECDH + HKDF-SHA256 + AES-GCM）并落在 OMEMO 2 的节点与消息结构上，可用于 Takina 双端私聊加密收发验证
-发送侧支持统一消息 DSL：不配置 `encryption {}` 时保持明文；配置后走对应加密方法
+`OmemoComponent` 提供了设备材料发布、联系人材料同步、消息加密与解密能力。当前实现采用真实密码学链路（Signal key transport + AES-GCM payload），支持 OMEMO v2 与 v1 双协议收发
+发送侧支持统一消息 DSL：不配置 `encryption {}` 时保持明文；配置后通过 `provider` 指定加密实现。OMEMO provider 默认 `AUTO` 协商，失败会回退 `V1`
+`AUTO` 现为兼容优先策略：若检测到对端支持 `V1` 则优先使用 `V1`（覆盖更多现有客户端），否则使用 `V2`
+`syncContactMaterial` 在 `AUTO` 下会尝试同步 `V2 + V1` 两代材料并缓存；`publishOwnMaterial` 会合并服务器已有设备列表并缓存自身设备材料，发送时除对端设备外也会覆盖本账号其它已知设备
+已按 XEP-0384 现行结构对齐 v2 bundle 节点：使用 `urn:xmpp:omemo:2:bundles` + `item id=<deviceId>`，并兼容解析历史 `bundles:<deviceId>` 形式
+为便于排障，已补齐 bundle 拉取/解析/发送阶段中文日志（含 `version/deviceId`）；当只拿到 device list 但缺少 bundle 时会明确记录
+`strictBundleSignatureValidation` 默认 `false`（兼容模式）：当远端 bundle 签名校验失败时默认记录告警并继续缓存；若需要严格模式可切换为 `true`
+v1/v2 发送均采用 Signal 协议密钥传输（`<key/>`）+ 头部 `<iv/>` + `payload` 密文分离格式
 
 ```kotlin
 import kotlinx.coroutines.runBlocking
@@ -235,7 +241,7 @@ runBlocking {
     to = bob
     body = "hello omemo"
     encryption {
-      method = EncryptionMethod.OMEMO
+      provider = omemoProvider(preferVersion = OmemoProtocolPreference.AUTO)
       fallbackBody = "信息已加密，请使用支持 OMEMO 的客户端查看"
       // required 默认为 true
     }

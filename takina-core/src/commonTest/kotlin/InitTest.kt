@@ -17,7 +17,7 @@ import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.exceptions.AmbiguousAccountException
 import org.atoriapps.takina.core.exceptions.InvalidRequestException
-import org.atoriapps.takina.core.requests.EncryptionMethod
+import org.atoriapps.takina.core.requests.omemoProvider
 import org.atoriapps.takina.core.xmpp.createBareJid
 import org.atoriapps.takina.core.xmpp.toBareJid
 import org.atoriapps.takina.core.xmpp.toJid
@@ -72,7 +72,7 @@ class CommonInitTest {
     }
 
     @Test
-    fun messageRequest_encryptionWithoutMethod_shouldFail() {
+    fun messageRequest_encryptionWithoutProvider_shouldFail() {
         val takina = createTakina(registerAllComponents = false) {
             addAccount {
                 jid = "alice@example.com".toBareJid()
@@ -105,7 +105,7 @@ class CommonInitTest {
                 to = "bob@example.com".toBareJid()
                 subject = "only-subject"
                 encryption {
-                    method = EncryptionMethod.OMEMO
+                    provider = omemoProvider()
                 }
             }
         }

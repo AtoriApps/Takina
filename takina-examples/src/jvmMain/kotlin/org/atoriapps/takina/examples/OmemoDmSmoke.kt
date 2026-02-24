@@ -7,6 +7,7 @@ import org.atoriapps.takina.core.createTakina
 import org.atoriapps.takina.core.events.FrameInboundEvent
 import org.atoriapps.takina.core.events.FrameOutboundEvent
 import org.atoriapps.takina.core.events.StanzaReceivedEvent
+import org.atoriapps.takina.core.requests.omemoProvider
 import org.atoriapps.takina.core.xmpp.toBareJid
 
 /**
@@ -73,9 +74,25 @@ fun main() = runBlocking {
     println("同步完成：A->B devices=${syncAB.devices.size} bundles=${syncAB.fetchedBundles}；B->A devices=${syncBA.devices.size} bundles=${syncBA.fetchedBundles}")
 
     println("发加密消息")
-    takina.omemo.sendEncryptedMessage(from = aJid, to = bJid, plaintext = msgA2B)
-    takina.omemo.sendEncryptedMessage(from = bJid, to = aJid, plaintext = msgB2A)
+    takina.request.message {
+        from = aJid
+        to = bJid
+        body = msgA2B
+        encryption {
+            provider = omemoProvider()
+            fallbackBody = "这这不能2B"
+        }
+    }.send()
+    takina.request.message {
+        from = bJid
+        to = aJid
+        body = msgB2A
+        encryption {
+            provider = omemoProvider()
+            fallbackBody = "这这不能2A"
+        }
+    }.send()
 
-    Thread.sleep(15000L)
+    Thread.sleep(120_000L) // 久等一下
     takina.disconnectAll()
 }

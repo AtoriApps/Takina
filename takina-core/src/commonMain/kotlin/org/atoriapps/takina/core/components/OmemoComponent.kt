@@ -28,8 +28,6 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
         const val PUBSUB_NAMESPACE: String = "http://jabber.org/protocol/pubsub"
         const val OMEMO_V2_NAMESPACE: String = "urn:xmpp:omemo:2"
         const val OMEMO_V1_NAMESPACE: String = "eu.siacs.conversations.axolotl"
-        private const val PACKET_VERSION: Int = 1
-        private const val WRAP_INFO: String = "takina-omemo-wrap-v1"
         private const val PAYLOAD_KEY_SIZE = 16
         private const val IV_SIZE = 12
         private const val GCM_TAG_SIZE = 16
@@ -435,7 +433,7 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
                 return@forEach
             }
             runCatching {
-                val encrypted = encryptPayloadKeyForDeviceV1(local = local, recipientDeviceId = deviceId, recipientBundle = bundle, recipientJid = to, payloadKeyAndTag = payloadPlain)
+                val encrypted = encryptPayloadKeyForDeviceV1(local = local, recipientDeviceId = deviceId, recipientBundle = bundle, recipientJid = to, payloadKeyAndTag = payloadPlain, version = version)
                 keyEnvelopes += encrypted
             }.onFailure { error -> LogUtils.warn(TAG, "OMEMO 跳过不可用的目标设备", "to=$to", "version=$version", "deviceId=$deviceId", error.message ?: "未知错误") }
         }
@@ -447,14 +445,14 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
                 return@forEach
             }
             runCatching {
-                val encrypted = encryptPayloadKeyForDeviceV1(local = local, recipientDeviceId = deviceId, recipientBundle = bundle, recipientJid = from, payloadKeyAndTag = payloadPlain)
+                val encrypted = encryptPayloadKeyForDeviceV1(local = local, recipientDeviceId = deviceId, recipientBundle = bundle, recipientJid = from, payloadKeyAndTag = payloadPlain, version = version)
                 keyEnvelopes += encrypted
             }.onFailure { error -> LogUtils.warn(TAG, "OMEMO 跳过自身其它设备", "from=$from", "version=$version", "deviceId=$deviceId", error.message ?: "未知错误") }
         }
 
         if (includeSenderDevice) {
             runCatching {
-                val selfEncrypted = encryptPayloadKeyForDeviceV1(local = local, recipientDeviceId = local.deviceId, recipientBundle = local.toPublicBundle(), recipientJid = from, payloadKeyAndTag = payloadPlain)
+                val selfEncrypted = encryptPayloadKeyForDeviceV1(local = local, recipientDeviceId = local.deviceId, recipientBundle = local.toPublicBundle(), recipientJid = from, payloadKeyAndTag = payloadPlain, version = version)
                 keyEnvelopes += selfEncrypted
             }.onFailure { error -> LogUtils.warn(TAG, "OMEMO 自身设备加密失败，将不包含自身 key", "from=$from", "version=$version", error.message ?: "未知错误") }
         }
@@ -530,6 +528,7 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
             senderJid = senderBare,
             senderDeviceId = sid,
             preKeyMessage = keyPacket.second,
+            version = version,
         ) ?: return null
         if (payloadPlain.size < PAYLOAD_KEY_SIZE + GCM_TAG_SIZE) return null
         val payloadIv = textOfTag(headerXml, "iv")?.let { runCatching { Base64Codec.decode(it) }.getOrNull() } ?: return null
@@ -655,53 +654,22 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
 
     private fun bundleNode(version: OmemoProtocolVersion, deviceId: Int): String = if (version == OmemoProtocolVersion.V2) "$OMEMO_V2_NAMESPACE:bundles" else "$OMEMO_V1_NAMESPACE.bundles:$deviceId"
 
-    private fun encryptPayloadKeyForDevice(senderDeviceId: Int, recipientDeviceId: Int, recipientSignedPreKey: ByteArray, payloadPlain: ByteArray): EncryptedKeyEnvelope {
-        val ephemeral = OmemoCrypto.generateEcKeyPair()
-        val shared = OmemoCrypto.deriveSharedSecret(ephemeral.privateKey, recipientSignedPreKey)
-        val wrapKey = OmemoCrypto.hkdfSha256(shared, salt = ByteArray(0), info = WRAP_INFO.encodeToByteArray(), size = 32)
-        val wrapIv = OmemoCrypto.randomBytes(IV_SIZE)
-        val aad = "$senderDeviceId:$recipientDeviceId".encodeToByteArray()
-        val wrappedPayload = OmemoCrypto.aesGcmEncrypt(wrapKey, wrapIv, payloadPlain, aad)
-        val packet = ByteArray(1 + 2 + ephemeral.publicKey.size + wrapIv.size + wrappedPayload.size)
-        packet[0] = PACKET_VERSION.toByte()
-        packet[1] = ((ephemeral.publicKey.size ushr 8) and 0xFF).toByte()
-        packet[2] = (ephemeral.publicKey.size and 0xFF).toByte()
-        ephemeral.publicKey.copyInto(packet, destinationOffset = 3)
-        wrapIv.copyInto(packet, destinationOffset = 3 + ephemeral.publicKey.size)
-        wrappedPayload.copyInto(packet, destinationOffset = 3 + ephemeral.publicKey.size + wrapIv.size)
-        return EncryptedKeyEnvelope(recipientDeviceId = recipientDeviceId, preKey = true, packet = packet)
-    }
-
-    private fun decryptPayloadKeyFromPacket(local: LocalDeviceState, packet: ByteArray, senderDeviceId: Int, recipientDeviceId: Int): ByteArray? {
-        if (packet.size < 1 + 2 + IV_SIZE + 1) return null
-        val version = packet[0].toInt() and 0xFF
-        if (version != PACKET_VERSION) return null
-        val pubSize = ((packet[1].toInt() and 0xFF) shl 8) or (packet[2].toInt() and 0xFF)
-        val pubStart = 3
-        val pubEnd = pubStart + pubSize
-        if (packet.size <= pubEnd + IV_SIZE) return null
-        val ephemeralPublic = packet.copyOfRange(pubStart, pubEnd)
-        val wrapIv = packet.copyOfRange(pubEnd, pubEnd + IV_SIZE)
-        val wrapped = packet.copyOfRange(pubEnd + IV_SIZE, packet.size)
-        val shared = OmemoCrypto.deriveSharedSecret(local.signedPreKeyPrivateKey, ephemeralPublic)
-        val wrapKey = OmemoCrypto.hkdfSha256(shared, salt = ByteArray(0), info = WRAP_INFO.encodeToByteArray(), size = 32)
-        val aad = "$senderDeviceId:$recipientDeviceId".encodeToByteArray()
-        return runCatching { OmemoCrypto.aesGcmDecrypt(wrapKey, wrapIv, wrapped, aad) }.getOrNull()
-    }
-
     private fun encryptPayloadKeyForDeviceV1(
         local: LocalDeviceState,
         recipientDeviceId: Int,
         recipientBundle: PublicBundle,
         recipientJid: BareJid,
         payloadKeyAndTag: ByteArray,
+        version: OmemoProtocolVersion,
     ): EncryptedKeyEnvelope {
         val preKey = recipientBundle.preKeys.firstOrNull() ?: error("OMEMO 目标 bundle 缺少 preKey")
+        val existingSession = store.loadRemoteSession(local.account, recipientJid, version, recipientDeviceId)
         val encrypted = OmemoSignal.encryptKeyTransport(
             localRegistrationId = local.registrationId,
             localIdentityKeyPair = local.identityKeyPair,
             localPreKeyRecords = local.preKeys.map { it.record },
             localSignedPreKeyRecord = local.signedPreKeyRecord,
+            existingSessionRecord = existingSession,
             remoteAddress = recipientJid.toString(),
             remoteDeviceId = recipientDeviceId,
             remoteIdentityKey = recipientBundle.identityPublicKey,
@@ -712,6 +680,7 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
             remotePreKeyPublicKey = preKey.publicKey,
             plaintext = payloadKeyAndTag,
         )
+        store.saveRemoteSession(local.account, recipientJid, version, recipientDeviceId, encrypted.sessionRecord)
         return EncryptedKeyEnvelope(recipientDeviceId = recipientDeviceId, preKey = encrypted.isPreKeyMessage, packet = encrypted.message)
     }
 
@@ -721,16 +690,23 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
         senderJid: BareJid,
         senderDeviceId: Int,
         preKeyMessage: Boolean,
-    ): ByteArray? = OmemoSignal.decryptKeyTransport(
-        localRegistrationId = local.registrationId,
-        localIdentityKeyPair = local.identityKeyPair,
-        localPreKeyRecords = local.preKeys.map { it.record },
-        localSignedPreKeyRecord = local.signedPreKeyRecord,
-        remoteAddress = senderJid.toString(),
-        remoteDeviceId = senderDeviceId,
-        message = packet,
-        isPreKeyMessage = preKeyMessage,
-    )
+        version: OmemoProtocolVersion,
+    ): ByteArray? {
+        val existingSession = store.loadRemoteSession(local.account, senderJid, version, senderDeviceId)
+        val decrypted = OmemoSignal.decryptKeyTransport(
+            localRegistrationId = local.registrationId,
+            localIdentityKeyPair = local.identityKeyPair,
+            localPreKeyRecords = local.preKeys.map { it.record },
+            localSignedPreKeyRecord = local.signedPreKeyRecord,
+            existingSessionRecord = existingSession,
+            remoteAddress = senderJid.toString(),
+            remoteDeviceId = senderDeviceId,
+            message = packet,
+            isPreKeyMessage = preKeyMessage,
+        ) ?: return null
+        store.saveRemoteSession(local.account, senderJid, version, senderDeviceId, decrypted.sessionRecord)
+        return decrypted.plaintext
+    }
 
     private fun textOfTag(xml: String, localName: String): String? {
         val bounds = XmlRegexUtils.findElementBounds(xml, localName) ?: return null
@@ -828,6 +804,9 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
         fun saveRemoteDeviceIds(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceIds: List<Int>)
         fun loadRemoteBundle(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int): PublicBundle?
         fun saveRemoteBundle(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int, bundle: PublicBundle)
+        fun loadRemoteSession(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int): ByteArray?
+        fun saveRemoteSession(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int, session: ByteArray)
+        fun clearRemoteSession(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int)
         fun loadRemoteSupport(account: BareJid, owner: BareJid): RemoteOmemoSupport?
         fun saveRemoteSupport(account: BareJid, owner: BareJid, support: RemoteOmemoSupport)
     }
@@ -836,6 +815,7 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
         private val localDevices = linkedMapOf<BareJid, LocalDeviceState>()
         private val remoteDeviceIds = linkedMapOf<Triple<BareJid, BareJid, OmemoProtocolVersion>, List<Int>>()
         private val remoteBundles = linkedMapOf<List<Any>, PublicBundle>()
+        private val remoteSessions = linkedMapOf<List<Any>, ByteArray>()
         private val remoteSupports = linkedMapOf<Pair<BareJid, BareJid>, RemoteOmemoSupport>()
 
         override fun loadLocalDevice(account: BareJid): LocalDeviceState? = synchronized(localDevices) { localDevices[account] }
@@ -856,6 +836,17 @@ class OmemoComponent internal constructor(private val takina: AbstractTakina) : 
 
         override fun saveRemoteBundle(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int, bundle: PublicBundle) {
             synchronized(remoteBundles) { remoteBundles[listOf(account, owner, version, deviceId)] = bundle }
+        }
+
+        override fun loadRemoteSession(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int): ByteArray? =
+            synchronized(remoteSessions) { remoteSessions[listOf(account, owner, version, deviceId)]?.copyOf() }
+
+        override fun saveRemoteSession(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int, session: ByteArray) {
+            synchronized(remoteSessions) { remoteSessions[listOf(account, owner, version, deviceId)] = session.copyOf() }
+        }
+
+        override fun clearRemoteSession(account: BareJid, owner: BareJid, version: OmemoProtocolVersion, deviceId: Int) {
+            synchronized(remoteSessions) { remoteSessions.remove(listOf(account, owner, version, deviceId)) }
         }
 
         override fun loadRemoteSupport(account: BareJid, owner: BareJid): RemoteOmemoSupport? =

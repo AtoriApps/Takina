@@ -60,23 +60,28 @@
 * **XEP-0363 HTTP File Upload**：`HttpUploadComponent` 已支持 slot 申请、URL 解析隔离、HTTP 头白名单限制及尺寸超限错误解析
     * *剩余工作*：自动失败重试机制与传输恢复策略
 
+### 3. P1 进阶能力
+
+1. **OMEMO 端到端加密 (XEP-0384 + XEP-0420)**：`基本完全实现`
+    * 已支持 v2/v1 双协议的设备列表与 bundle publish/fetch、材料缓存、消息加密/解密收发链路（`OmemoComponent`），并接入统一消息 DSL（`message { encryption { provider=omemoProvider(preferVersion=AUTO) ... } }`，AUTO 缺省为兼容优先：可用 V1 时优先 V1，协商失败回退 V1）
+    * 已补齐多端覆盖：`syncContactMaterial(AUTO)` 会同步两代材料并缓存，`publishOwnMaterial` 会合并并缓存本账号设备材料，出站加密除对端设备外还覆盖本账号其它已知设备
+    * 已修正 v2 bundle pubsub 节点为 `urn:xmpp:omemo:2:bundles + item id=<deviceId>`，并兼容旧式 `bundles:<deviceId>` 解析；已补齐 bundle 缺失/拉取失败/解析失败日志，减少“有 rid 无 key”静默问题
+    * 已将 key transport 切换为 Signal 协议实现（`signal-protocol-java`），并使用 `<header><key/><iv/></header> + <payload/>` 结构完成收发闭环
+    * 已提供会话持久化接口（`OmemoStateStore.load/save/clearRemoteSession`），支持使用方按 `account+owner+version+deviceId` 落地会话，实现跨进程恢复
+    * `takina-examples` 的 `OmemoDmSmoke` 已提供可复用的 JVM 文件持久化示例（可通过 `TAKINA_OMEMO_STORE_FILE` 指定路径）
+    * *剩余工作*：默认持久化实现与迁移策略完善、prekey 生命周期与轮换策略、跨客户端完整互通回归
+
 ---
 
 ## 📅 待办清单
 
 ### 🚧 P1 进阶能力
 
-1. **OMEMO 端到端加密 (XEP-0384 + XEP-0420)**：`部分实现`
-    * 已支持 v2/v1 双协议的设备列表与 bundle publish/fetch、材料缓存、消息加密/解密收发链路（`OmemoComponent`），并接入统一消息 DSL（`message { encryption { provider=omemoProvider(preferVersion=AUTO) ... } }`，AUTO 缺省为兼容优先：可用 V1 时优先 V1，协商失败回退 V1）
-    * 已补齐多端覆盖：`syncContactMaterial(AUTO)` 会同步两代材料并缓存，`publishOwnMaterial` 会合并并缓存本账号设备材料，出站加密除对端设备外还覆盖本账号其它已知设备
-    * 已修正 v2 bundle pubsub 节点为 `urn:xmpp:omemo:2:bundles + item id=<deviceId>`，并兼容旧式 `bundles:<deviceId>` 解析；已补齐 bundle 缺失/拉取失败/解析失败日志，减少“有 rid 无 key”静默问题
-    * 已将 key transport 切换为 Signal 协议实现（`signal-protocol-java`），并使用 `<header><key/><iv/></header> + <payload/>` 结构完成收发闭环
-    * *剩余工作*：完整会话状态持久化与棘轮恢复策略（当前以内存会话为主）、跨进程 identity/session/prekey 存储抽象、跨客户端完整互通回归
-2. **P0 协议族的严格语义补齐**
+1. **P0 协议族的严格语义补齐**
     * 基于 XEP-0030/0115/0184/0280 补齐能力缓存、哈希严格验证、回执细粒度配置与多端一致性边界
-3. **隐私与管控 (XEP-0191)**
+2. **隐私与管控 (XEP-0191)**
     * 黑名单拉取与管理
-4. **用户资料 (XEP-0084 + XEP-0163)**
+3. **用户资料 (XEP-0084 + XEP-0163)**
     * 用户头像与基础 PEP 事件能力获取
 
 ### ⏳ P2 体验增强

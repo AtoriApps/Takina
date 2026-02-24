@@ -23,6 +23,12 @@ data class OmemoSignalLocalMaterial(
 data class OmemoSignalEncryptedMessage(
     val message: ByteArray,
     val isPreKeyMessage: Boolean,
+    val sessionRecord: ByteArray,
+)
+
+data class OmemoSignalDecryptedMessage(
+    val plaintext: ByteArray,
+    val sessionRecord: ByteArray,
 )
 
 expect object OmemoSignal {
@@ -33,6 +39,7 @@ expect object OmemoSignal {
         localIdentityKeyPair: ByteArray,
         localPreKeyRecords: List<ByteArray>,
         localSignedPreKeyRecord: ByteArray,
+        existingSessionRecord: ByteArray?,
         remoteAddress: String,
         remoteDeviceId: Int,
         remoteIdentityKey: ByteArray,
@@ -49,9 +56,10 @@ expect object OmemoSignal {
         localIdentityKeyPair: ByteArray,
         localPreKeyRecords: List<ByteArray>,
         localSignedPreKeyRecord: ByteArray,
+        existingSessionRecord: ByteArray?,
         remoteAddress: String,
         remoteDeviceId: Int,
         message: ByteArray,
         isPreKeyMessage: Boolean,
-    ): ByteArray?
+    ): OmemoSignalDecryptedMessage?
 }

@@ -217,6 +217,7 @@ createTakina(registerAllComponents = false) {
 为便于排障，已补齐 bundle 拉取/解析/发送阶段中文日志（含 `version/deviceId`）；当只拿到 device list 但缺少 bundle 时会明确记录
 `strictBundleSignatureValidation` 默认 `false`（兼容模式）：当远端 bundle 签名校验失败时默认记录告警并继续缓存；若需要严格模式可切换为 `true`
 v1/v2 发送均采用 Signal 协议密钥传输（`<key/>`）+ 头部 `<iv/>` + `payload` 密文分离格式
+OMEMO 会话状态支持协作式持久化：使用方可自定义 `OmemoStateStore` 落地 `load/save/clearRemoteSession(account, owner, version, deviceId)`，实现跨进程恢复；未自定义时默认内存态
 
 ```kotlin
 import kotlinx.coroutines.runBlocking
@@ -249,6 +250,12 @@ runBlocking {
 }
 ```
 
+**跨进程恢复建议**：
+实现自定义 `OmemoStateStore` 时，建议至少持久化以下数据：
+* `LocalDeviceState`（identity/signedPreKey/preKeys）
+* 远端 `deviceIds` 与 `bundle`
+* 远端 `session`（按 `account + owner + version + deviceId` 索引）
+
 ## 编译与测试
 
 编译核心库并运行测试：
@@ -274,8 +281,11 @@ TAKINA_A_JID='alice@example.com' \
 TAKINA_A_PASSWORD='secretA' \
 TAKINA_B_JID='bob@example.com' \
 TAKINA_B_PASSWORD='secretB' \
+TAKINA_OMEMO_STORE_FILE='./build/omemo-dm-smoke.store' \
 ./gradlew :takina-examples:runOmemoPrivateSmokeExample
 ```
+
+说明：`OmemoDmSmoke` 已内置一个 JVM 文件版 `OmemoStateStore`，默认会把 OMEMO 本地设备、远端材料与会话状态存到 `./build/omemo-dm-smoke.store`；下次冒烟会自动复用
 
 更多基础示例可查阅 `takina-examples` 下的代码
 

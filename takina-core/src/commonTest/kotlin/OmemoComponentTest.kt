@@ -13,6 +13,41 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class OmemoComponentTest {
+    private data class SessionKey(
+        val account: org.atoriapps.takina.core.xmpp.BareJid,
+        val owner: org.atoriapps.takina.core.xmpp.BareJid,
+        val version: OmemoProtocolVersion,
+        val deviceId: Int,
+    )
+
+    private class TrackingOmemoStore : OmemoComponent.OmemoStateStore {
+        private val delegate = OmemoComponent.InMemoryOmemoStateStore()
+        val savedSessions = linkedSetOf<SessionKey>()
+
+        override fun loadLocalDevice(account: org.atoriapps.takina.core.xmpp.BareJid) = delegate.loadLocalDevice(account)
+        override fun saveLocalDevice(state: OmemoComponent.LocalDeviceState) = delegate.saveLocalDevice(state)
+        override fun loadRemoteDeviceIds(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, version: OmemoProtocolVersion) =
+            delegate.loadRemoteDeviceIds(account, owner, version)
+        override fun saveRemoteDeviceIds(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, version: OmemoProtocolVersion, deviceIds: List<Int>) =
+            delegate.saveRemoteDeviceIds(account, owner, version, deviceIds)
+        override fun loadRemoteBundle(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, version: OmemoProtocolVersion, deviceId: Int) =
+            delegate.loadRemoteBundle(account, owner, version, deviceId)
+        override fun saveRemoteBundle(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, version: OmemoProtocolVersion, deviceId: Int, bundle: OmemoComponent.PublicBundle) =
+            delegate.saveRemoteBundle(account, owner, version, deviceId, bundle)
+        override fun loadRemoteSession(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, version: OmemoProtocolVersion, deviceId: Int) =
+            delegate.loadRemoteSession(account, owner, version, deviceId)
+        override fun saveRemoteSession(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, version: OmemoProtocolVersion, deviceId: Int, session: ByteArray) {
+            delegate.saveRemoteSession(account, owner, version, deviceId, session)
+            savedSessions += SessionKey(account, owner, version, deviceId)
+        }
+        override fun clearRemoteSession(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, version: OmemoProtocolVersion, deviceId: Int) =
+            delegate.clearRemoteSession(account, owner, version, deviceId)
+        override fun loadRemoteSupport(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid) =
+            delegate.loadRemoteSupport(account, owner)
+        override fun saveRemoteSupport(account: org.atoriapps.takina.core.xmpp.BareJid, owner: org.atoriapps.takina.core.xmpp.BareJid, support: RemoteOmemoSupport) =
+            delegate.saveRemoteSupport(account, owner, support)
+    }
+
     @Test
     fun fetchDeviceList_shouldUseOmemo2DevicesNode() {
         val takina = createTakina(registerAllComponents = false) {
@@ -251,5 +286,39 @@ class OmemoComponentTest {
         val xml = encrypted.toXml()
         assertTrue(xml.contains("rid='${aliceOther.deviceId}'"))
         assertTrue(xml.contains("rid='${bobLocal.deviceId}'"))
+    }
+
+    @Test
+    fun encryptAndDecrypt_shouldPersistSessionToStore() {
+        val takina = createTakina(registerAllComponents = false) {
+            registerComponent(OmemoComponent)
+            addAccount {
+                jid = "alice@example.com".toBareJid()
+                password = "password"
+            }
+            addAccount {
+                jid = "bob@example.com".toBareJid()
+                password = "password"
+            }
+        }
+
+        val store = TrackingOmemoStore()
+        takina.omemo.store = store
+        val alice = "alice@example.com".toBareJid()
+        val bob = "bob@example.com".toBareJid()
+        val aliceLocal = takina.omemo.bootstrapLocalDevice(alice)
+        val bobLocal = takina.omemo.bootstrapLocalDevice(bob)
+        takina.omemo.store.saveRemoteDeviceIds(account = alice, owner = bob, version = OmemoProtocolVersion.V1, deviceIds = listOf(bobLocal.deviceId))
+        takina.omemo.store.saveRemoteBundle(account = alice, owner = bob, version = OmemoProtocolVersion.V1, deviceId = bobLocal.deviceId, bundle = bobLocal.toPublicBundle())
+        takina.omemo.store.saveRemoteDeviceIds(account = bob, owner = alice, version = OmemoProtocolVersion.V1, deviceIds = listOf(aliceLocal.deviceId))
+        takina.omemo.store.saveRemoteBundle(account = bob, owner = alice, version = OmemoProtocolVersion.V1, deviceId = aliceLocal.deviceId, bundle = aliceLocal.toPublicBundle())
+        takina.omemo.saveRemoteOmemoSupport(alice, bob, RemoteOmemoSupport(supportsV2 = false, supportsV1 = true))
+        takina.omemo.saveRemoteOmemoSupport(bob, alice, RemoteOmemoSupport(supportsV2 = false, supportsV1 = true))
+
+        val encrypted = takina.omemo.encryptMessage(from = alice, to = bob, plaintext = "persist-session")
+        takina.omemo.decryptMessage(self = bob, messageXml = encrypted.toXml())
+
+        assertTrue(store.savedSessions.contains(SessionKey(account = alice, owner = bob, version = OmemoProtocolVersion.V1, deviceId = bobLocal.deviceId)))
+        assertTrue(store.savedSessions.contains(SessionKey(account = bob, owner = alice, version = OmemoProtocolVersion.V1, deviceId = aliceLocal.deviceId)))
     }
 }

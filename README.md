@@ -1,4 +1,4 @@
-# Takina (泷奈)
+# Takina
 
 [English](./README_EN.md): Outdated, for the latest information, please refer to this Chinese version
 
@@ -18,18 +18,20 @@ Takina 是由 Atori Apps 团队维护的 [Kotlin](https://kotlinlang.org/) [XMPP
 
 Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，避免逻辑耦合，便于扩展与裁剪。
 
-**工程分层**：
+### 工程分层：
 * `takina-core/src/common**`：平台无关的核心（协议模型、请求 API、连接状态机、事件模型、组件抽象）和测试集
 * `takina-core/src/jvm**`：JVM 平台的实现（Socket/TLS、事件总线并发实现等）和测试集
 * `takina-examples/src/jvmMain`：使用示例与冒烟验证入口
 
-**组件化原则**：
+### 组件化原则：
+
 * **核心能力（必需）**：提供连接生命周期、账号管理、事件分发、基础 stanza 请求等底座能力，为保证效率，不打算组件化
 * **可选组件（按需）**：承载具体 XEP 与高级能力（如 MAM、MUC 等），可按需注册，未注册不会影响核心链路
+
 > 注：后续新增协议能力应优先作为可选组件开发，仅当属于跨组件共享的底座逻辑时才进入核心层
 
-当前内置可选组件（截至 2026-02-20）：
-* `DiscoveryComponent`、`CapabilitiesComponent`、`CarbonsComponent`、`MessageReceiptsComponent`、`StreamManagementComponent`、`RosterComponent`、`MamComponent`、`MucComponent`、`CsiPushComponent`、`HttpUploadComponent`、`ConnectionDiscoveryComponent`、`OmemoComponent`
+### 当前内置可选组件：
+`DiscoveryComponent`、`CapabilitiesComponent`、`CarbonsComponent`、`MessageReceiptsComponent`、`StreamManagementComponent`、`RosterComponent`、`MamComponent`、`MucComponent`、`CsiPushComponent`、`HttpUploadComponent`、`ConnectionDiscoveryComponent`、`OmemoComponent`
 
 ## 功能进度
 
@@ -80,7 +82,6 @@ takina.request.message {
 }.send()
 
 takina.disconnectAll()
-
 ```
 
 ### 进阶使用
@@ -95,24 +96,21 @@ takina.disconnectAll()
 
 ```bash
 ./gradlew :takina-core:allTests :takina-examples:compileKotlinJvm
-
 ```
 
 **运行冒烟测试**：
-支持环境变量组合启用单一能力测试验证（更多测试参数请查看源码）
+支持环境变量组合启用单一能力测试验证（更多测试参数请查看源码）：
 
 ```bash
 TAKINA_JID='alice@example.com' \
 TAKINA_PASSWORD='secret' \
 ./gradlew :takina-examples:runSmokeClientExample
-
 ```
 
 更多真实代码示例与测试可查阅 `takina-examples` 下的代码
 
 ## 开源与支持
 
-* **开发计划**：最新动向请参见由官方维护的 Issue 列表
 * **代码贡献**：如果您有改进或建议，欢迎先开 Issue 进行讨论；贡献指南文档正在编写中，敬请期待
 * **赞助我们**：官方公共收款通道规划中；如果您愿意马上支持我们的开发进度，可以通过 Issue 告知我们您期望的赞助方式（如微信、支付宝、PayPal 等）
 

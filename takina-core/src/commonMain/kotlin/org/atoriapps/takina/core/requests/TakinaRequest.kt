@@ -76,12 +76,10 @@ class PendingMessageRequest internal constructor(
     fun toXml(): String = stanza.toXml()
 
     private fun sendOmemo(config: MessageEncryptionRequest, provider: OmemoEncryptionProvider) {
-        val plaintext = sourceBody?.takeIf { it.isNotBlank() }
-            ?: throw InvalidRequestException("message.body is required when encryption.provider=Omemo")
+        val plaintext = sourceBody?.takeIf { it.isNotBlank() } ?: throw InvalidRequestException("message.body is required when encryption.provider=Omemo")
 
         // TODO：自动解析
-        val fromBare = stanza.from?.bareJid
-            ?: throw InvalidRequestException("message.from is required when encryption.method=OMEMO")
+        val fromBare = stanza.from?.bareJid ?: throw InvalidRequestException("message.from is required when encryption.method=OMEMO")
 
         val omemo = takina.findComponent(OmemoComponent)
 

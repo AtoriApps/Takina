@@ -7,7 +7,7 @@
 ## 简介
 
 Takina 是由 Atori Apps 团队维护的 [Kotlin](https://kotlinlang.org/) [XMPP](https://xmpp.org) 客户端库，提供了对 XMPP 核心标准的基础实现以及 XML 处理功能。
-目前 XEP 扩展支持正在持续落地中，未来她将作为 Atori 的 `Xmpp 平台能力模块` 底座，用于支撑全平台的聊天通讯能力。
+目前 XEP 扩展支持正在持续落地中，未来她将作为 Atori 的 `Xmpp 平台能力模块` 底座，用于支撑全平台的聊天通讯能力
 
 作为采用 [Kotlin Multiplatform](https://kotlinlang.org/docs/reference/multiplatform.html) 技术栈的开源项目，Takina 旨在覆盖尽可能多的平台：
 * JVM
@@ -16,7 +16,7 @@ Takina 是由 Atori Apps 团队维护的 [Kotlin](https://kotlinlang.org/) [XMPP
 
 ## 项目架构
 
-Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，避免逻辑耦合，便于扩展与裁剪。
+Takina 采用 **KMP 分层 + 组件化** 设计，功能以组件形式组织，避免逻辑耦合，便于扩展与裁剪
 
 ### 工程分层：
 * `takina-core/src/common**`：平台无关的核心（协议模型、请求 API、连接状态机、事件模型、组件抽象）和测试集

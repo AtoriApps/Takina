@@ -36,7 +36,7 @@
 * 🟢 **[XEP-0352 / 0357] 移动端保活 (CSI & Push)**：打通 Active/Inactive 状态帧及 Push 开关流程
   * **进行中**：生命周期自动切换策略与 publish-options 全量语义
 * 🟢 **[XEP-0363] HTTP 文件上传**：支持 Slot 申请、URL 解析隔离、尺寸超限拦截
-  * **进行中**：自动失败重试与传输恢复策略。另外就是，这玩意要不要接入Ktor？
+  * **进行中**：自动失败重试与传输恢复策略？不过这个组件更多是建包和解析包吧，真正上传是用户负责
 
 ### 3. P1 进阶能力
 
@@ -61,21 +61,22 @@
 
 ## 🧱 后续待办清单：设计改进（工程可用性）
 
-### 🚧 优先级：高 (P1)
-- [ ] **连接 API 协程化（不一定需要，没准用户期望阻塞地等待）**：补齐 `suspend connect/disconnect/connectAll/disconnectAll`
 - [ ] **登录等的重试策略**：看怎么设计，以使得譬如 `connectAll` 能够不一次未成功就放弃，也让用户可以配置策略
-- [ ] **统一结果模型**：引入 sealed result（Success/Timeout/Disconnected/AuthFailed/...），不要老是硬抛异常让用户 try-catch
-- [ ] **连接状态快照流**：提供 `StateFlow/Flow` 级账号状态聚合，而非仅离散事件
-- [ ] **请求级上下文能力（得再想想，这玩意有什么场景）**：增加 traceId / cancellation / timeout policy 的统一请求上下文
-- [ ] **事件线程模型可配置化**：支持在配置阶段注入 dispatcher/scope/错误处理策略
-
-### ⏳ 优先级：中 (P2)
-- [ ] **事件类型化增强**：在保留 raw XML 的同时，提供 Message/Presence/IQ typed inbound 事件
-- [ ] **高层业务事件**：补齐 MessageDelivered / RosterUpdated / MamPageLoaded / OmemoSessionChanged 等 domain 事件
-- [ ] **订阅人体工学**：补充 `on(...) -> Disposable` 与 `once(...)`，降低 removeOn 维护成本
-- [ ] **组件能力软依赖入口（这个我觉得不一定需要，因为用户一般知道自己配置了什么组件）**：为 `takina.xxx` 增加 `xxxOrNull` 风格，减少未注册组件硬异常
-- [ ] **DSL 编译期约束增强**：逐步从运行时校验转向更强类型约束（必填字段分阶段构建）
 - [ ] **Java写法替换**：将公共部分还残留的Java写法，迁移为平台无关的（比如用协程的 `delay + structured concurrency` 代替 `Thread.sleep`）
+- [ ] **统一结果模型**：引入 sealed result（Success/Timeout/Disconnected/AuthFailed/...）；同时了考虑加强一些Unit方法，变成能有Result的
+- [ ] **错误码标准化**：可能也是enum或者sealed错因，就像是目前的连接错因
+- [ ] **连接 API 协程化（挂起化）**：补齐 `suspend connect/disconnect/connectAll/disconnectAll`
+- [ ] **一些东西的Flow化**：如连接状态，Roster等。看怎么做
+- [ ] **组件的API DSL化**：譬如要发Muc申请进群，也应该搞一个扩展到takina.request.muc.join { }（我暂时这样设想）
+- [ ] **高层业务事件**：补齐 MessageDelivered / RosterUpdated / MamPageLoaded / OmemoSessionChanged 等 domain 事件
+- [ ] **Typed Stanza处理拦截/转换插件**：能提供如收到OMEMO消息自动解密的能力
+- [ ] **订阅人体工学**：补充 `on(...) -> Disposable` 与 `once(...)`，降低 removeOn 维护成本
+- [ ] **DSL 编译期约束增强**：逐步从运行时校验转向更强类型约束（必填字段分阶段构建）
+- [ ] **组件能力软依赖入口（这个我觉得不一定需要，因为用户一般知道自己配置了什么组件）**：为 `takina.xxx` 增加 `xxxOrNull` 风格，减少未注册组件硬异常
+- [ ] **请求级上下文能力（得再想想，这玩意有什么场景）**：增加 traceId / cancellation / timeout policy 的统一请求上下文
+- [ ] **事件线程模型可配置化**：支持在配置阶段注入 dispatcher/scope/错误处理策略。这个又怎么说？？我得想想
+- [ ] **模块领域对象**：譬如账号对象、私聊对象、群聊对象，针对性地收发消息等？有必要吗
+- [ ] **给API打标**：可能如 @TakinaStableApi / @TakinaExperimentalApi / @TakinaInternalApi
 
 ---
 

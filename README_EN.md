@@ -2,6 +2,8 @@
 
 [中文](./README.md)：中文版是最勤更新的
 
+![Banner](./TAKINA_BANNER.svg)
+
 ## Introduction
 
 Takina is a [Kotlin](https://kotlinlang.org/)-based [XMPP](https://xmpp.org) client library maintained by the Atori Apps team. It provides a foundational implementation of XMPP core standards and XML processing capabilities

@@ -163,6 +163,7 @@ abstract class AbstractTakina(val config: TakinaConfiguration) : TakinaContext {
         sendRawWithInterceptors(connection, stanza.toXml())
     }
 
+    // HACK：Iq没走拦截
     internal suspend fun sendIqAndAwaitResult(
         from: Jid?,
         stanza: IqStanza,

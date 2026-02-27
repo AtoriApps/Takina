@@ -114,14 +114,15 @@ interface TakinaFeature {
   fun onShutdown(context: FeatureContext) {}
 
   fun api(): FeatureApi? = null
+    
   fun lifecycleHooks(): List<ConnectionLifecycleHook> = emptyList()
+    
   fun inboundNodes(): List<InboundNode> = emptyList()
   fun outboundNodes(): List<OutboundNode> = emptyList()
 }
 ```
 
-术语统一使用 `安装`
-不得混用 注册 与 安装
+术语统一使用 `安装`，不混用 注册 与 安装
 
 ### 两层控制面
 
@@ -160,13 +161,39 @@ interface TakinaFeature {
 配置变更只影响未来事件
 不追溯历史
 
-每个 Feature 与 Node 必须声明 applyMode
+运行时生效类型固定为以下三种
 
 - `IMMEDIATE`
 - `NEXT_ITEM`
 - `NEXT_CONNECTION`
 
-`NEXT_CONNECTION` 表示需重连后生效
+另有构建期不可变类型
+
+- `BUILD_TIME_IMMUTABLE`（变更必须拒绝）
+
+#### v1 生效矩阵（冻结）
+
+| 配置项 | 生效时机 |
+|---|---|
+| `connection.host` `connection.port` `securityMode` | `NEXT_CONNECTION` |
+| TLS 信任链与证书钉扎配置 | `NEXT_CONNECTION` |
+| SASL 机制与认证参数 | `NEXT_CONNECTION` |
+| 资源绑定策略（resource） | `NEXT_CONNECTION` |
+| 压缩协商开关 | `NEXT_CONNECTION` |
+| `StreamManagementFeature` 启停与恢复策略 | `NEXT_CONNECTION` |
+| 握手阶段超时参数 | `NEXT_CONNECTION` |
+| 业务入站/出站节点启停 | `NEXT_ITEM` |
+| 业务入站/出站节点排序 | `NEXT_ITEM` |
+| 默认消息加密策略（global/account/conversation） | `NEXT_ITEM` |
+| 默认请求超时与重试参数 | `NEXT_ITEM` |
+| 未知帧处理策略 | `NEXT_ITEM` |
+| 自动重连开关 | `IMMEDIATE` |
+| 重连退避参数（delay/factor/jitter/maxAttempts） | `IMMEDIATE` |
+| 观测采样与告警阈值 | `IMMEDIATE` |
+| 事件订阅过滤器 | `IMMEDIATE` |
+| 不涉及协商的纯 API 能力开关 | `IMMEDIATE` |
+| 涉及协商的能力开关 | `NEXT_CONNECTION` |
+| `features { install(...) }` 安装集 | `BUILD_TIME_IMMUTABLE` |
 
 ### 动态开关
 
@@ -183,6 +210,51 @@ interface TakinaFeature {
 | Feature 已安装并启用 无节点 | 可见 | 是 | 不适用 | 纯 API 或纯 Hook 能力 |
 | Feature 已安装并启用 节点禁用 | 可见 | 是 | 否 | 仅节点不生效 |
 | Feature 已安装并启用 节点启用 | 可见 | 是 | 是 | 全量生效 |
+
+### 事件模型（v1 精简刚需）
+
+v1 只保留事实级事件
+步骤级细粒度事件不进入 core
+
+#### Core 事件（内置）
+
+- `TakinaStartedEvent`
+- `TakinaShutdownCompletedEvent`
+- `AccountAddedEvent`
+- `AccountRemovedEvent`
+- `GlobalConfigChangedEvent`
+- `AccountConfigChangedEvent`
+- `FeatureStateChangedEvent`
+- `ConfigAppliedEvent`
+- `ConfigApplyDeferredEvent`
+- `ConfigRejectedEvent`
+- `ConnectionStateChangedEvent`
+- `UnexpectedDisconnectedEvent`
+- `ReconnectScheduledEvent`
+- `ReconnectExhaustedEvent`
+- `SessionReadyEvent`
+- `FrameInboundParseFailedEvent`
+- `UnknownFrameInboundEvent`
+- `MessageReceivedEvent`
+- `PresenceReceivedEvent`
+- `IqReceivedEvent`
+- `MessageSentEvent`
+- `MessageSendFailedEvent`
+- `RequestFailedEvent`
+- `RequestTimeoutEvent`
+- `EncryptionFailedEvent`
+- `DecryptionFailedEvent`
+- `StoreOperationFailedEvent`
+
+#### Feature 专属事件（按安装启用）
+
+拿 `StreamManagementFeature` 举例子，它可能有：
+
+- `StreamManagementResumedEvent`
+- `StreamManagementResumeFailedEvent`
+- `StreamManagementGapDetectedEvent`
+
+更多能力的事件暂不列出，实现时按我们的习惯类推即可
 
 ### 可解释性与观测
 
@@ -257,9 +329,10 @@ Business outbound
 ### 加密策略层级
 
 保留单消息配置。目前API设计：
+消息DSL必须在每次发消息前拉取最新提供者，确保加密配置正确
 
 ```kotlin
-request.message {
+takina/* or specific handle */.request.message {
   encryption { /*...*/ }
 }
 ```
@@ -317,14 +390,108 @@ request.message {
 
 ## API 命名规范
 
-固定三大入口
+（以下为规范化的必有的，但不代表最后仅有它们，如果要有更多合理的，未来实现并添加）
+
+顶层固定入口与动作
+
+字段：
 
 - `takina.events`
 - `takina.runtime`
 - `takina.request`
 
-`runtime` 用于承载状态与运行信息
-如 `connectionStates` `activePipeline` `health`
+方法：
+
+- `takina.capability { ... }`
+- `takina.config { ... }`
+- `takina.addAccount { ... }`
+- `takina.removeAccount(jid)`
+- `takina.forAccount(jid): AccountHandle`
+- `suspend takina.connect(jid)` / `takina.connect(accountHandle)` 与对应的断连方法
+- `suspend takina.connectAll()` 与对应的断连方法
+- `takina.shutdown()`
+
+.runtime：用于承载状态与运行信息
+- 如 `accountStates` `connectionStates` `activePipeline` `health`
+
+.events 下的方法与属性：
+
+- `.events.on(Event){}`
+- `.events.once(Event){}`
+- `.events.removeOn(Event){}`
+- `.events.flow(Event): Flow<Event>`
+- `.events.enableEventLog: Boolean`（这样设置虽然直观，但会不会略显粗糙，而且只有全局粒度。是否变为在config或者是capability里设置更好？）
+
+.request 下的方法：
+
+- `.request.message { ... } : PendingMessageRequest`
+- `.request.presence { ... } : PendingPresenceRequest`
+- `.request.iq { ... } : PendingIqRequest`
+
+账号句柄的方法：
+
+- `accountHandle.request`
+- `accountHandle.capability { ... }`
+- `accountHandle.config { ... }`
+- `suspend accountHandle.connect()`
+- `suspend accountHandle.disconnect()`
+
+获取功能的API：
+
+- `takina.[FEARURE_NAME] : FeatureApi`：如 `takina.omemo`、`takina.streamManagement`
+
+说明：
+
+- 顶层与账号级配置都允许运行时变更
+- 生效时机由对应配置项 `applyMode` 决定
+
+---
+
+## 连接与状态恢复规范
+
+### 状态模型（冻结）
+
+`AccountState`
+
+- `REGISTERED`
+- `CONNECTING`
+- `ONLINE`
+- `DEGRADED`
+- `RECONNECTING`
+- `OFFLINE`
+- `FAILED`
+- `REMOVED`
+
+`ConnectionState`
+
+- `IDLE`
+- `TCP_CONNECTING`
+- `TLS_HANDSHAKING`
+- `STREAM_OPENING`
+- `AUTHENTICATING`
+- `BINDING_RESOURCE`
+- `ESTABLISHED`
+- `INTERRUPTED`
+- `RESUMING_SM`
+- `RECONNECT_WAIT`
+- `CLOSED`
+
+状态变化必须发 `ConnectionStateChangedEvent`
+
+### 断线与重连策略（冻结）
+
+非用户主动断开时
+
+- 默认启用自动重连（`FeaturePreset.Recommended`）
+- 启用流管理时先尝试 `RESUMING_SM`
+- 流管理恢复失败则降级为完整重连
+- 未启用流管理则直接完整重连
+- 认证硬错误（如凭据错误）进入 `FAILED`，不进行无限重试
+
+重连配置入口
+
+- `takina.config { reconnect { ... } }`（全局默认）
+- `takina.forAccount(jid).config { reconnect { ... } }`（账号覆盖）
 
 ---
 
@@ -393,7 +560,7 @@ val takina = createTakina(preset = FeaturePreset.Recommended) {
     defaults {
       messageEncryption = EncryptionPolicy.None
     }
-      
+
     // capability、pipeline
   }
 
@@ -441,6 +608,7 @@ alice.request.message {
   encryption { provider = omemoProvider() }
 }.send()
 
+// HACK：runtime的xxxStates是不是支持`.value`
 takina.runtime.connectionStates.collect { states ->
   println(states)
 }
@@ -462,17 +630,26 @@ takina.request.requestHttpUploadSlot{ /*DSL*/ }.send()
 
 ---
 
-## 待决策项
+## 待明确
 
-本节为 Exploratory
-不影响已冻结规范的实现
+1. 事件 payload 字段定义（每个事件类的最小字段集）
+2. 错误码总表与 retryable 判定规则
+3. 全配置项 `applyMode` 明细表（逐字段）
+4. `FeaturePreset.Minimal/Recommended/Full` 的 feature 与节点排序清单
+5. Feature 依赖/互斥规则与拓扑报错格式
+6. 请求超时、取消、重试、幂等语义
+7. 重连与流管理下的队列重放边界（重发/丢弃规则）
+8. introspection 返回结构（`describe*`）与稳定字段
+9. 状态机迁移图（含异常路径）
+10. Experimental 能力边界与注解策略（如注册能力）
+11. `TakinaResult` 具体定义
+12. 带内注册（Registration）能力语义：在dsl（takina.registration.newSession(host,port){}）里面完成注册表单填写、验证流程，功能将在独立轻量连接中完成注册；用户可在注册成功后`升级`连接为正式账号连接
 
-1. `TakinaResult` 是否复用 Kotlin `Result`：目前倾向不复用
-2. 排序冲突默认策略选择 fail 还是 warn + disable：建议是拓扑检查，fast fail
-3. `recommended` 预设包含哪些功能/节点：我觉得除了`无关紧要的、不稳定的`，其它都包含
-4. 哪些能力属于 NEXT_CONNECTION 白名单
-5. Domain Event 最小必选集合
-6. 我们具体有的事件、错误码等，必须尽量详细列列
+---
+
+## 补充构想
+
+暂无
 
 ---
 

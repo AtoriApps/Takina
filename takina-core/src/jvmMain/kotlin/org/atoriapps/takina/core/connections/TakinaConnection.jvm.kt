@@ -46,9 +46,7 @@ actual class Connector actual constructor() : AbstractConnector() {
         val activeSocket = socket ?: error("connector is not connected")
         val activeReader = reader ?: error("connector is not connected")
         val previous = activeSocket.soTimeout
-        if (timeoutMillis >= 0) {
-            activeSocket.soTimeout = timeoutMillis
-        }
+        if (timeoutMillis >= 0) activeSocket.soTimeout = timeoutMillis
         return try {
             readNextFrame(activeReader)
         } finally {

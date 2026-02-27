@@ -76,6 +76,7 @@ class StreamManagementComponent internal constructor(
             markResumeRequested(state, previousId)
             transport.sendRawFrame(resume(previousId = previousId, handledByClient = handledByClient).toXmlString())
             LogUtils.warn(TAG, "已在绑定前发送流管理 resume", connection.boundJid, "previd=$previousId", "h=$handledByClient")
+
             repeat(20) {
                 val frameXml = transport.readFrame(connection.config.connectTimeoutMillis)
                 val frame = onInboundFrame(connection.boundJid, frameXml) ?: return@repeat
@@ -84,15 +85,19 @@ class StreamManagementComponent internal constructor(
                         if (!isResumedFrameConsistent(state, frame)) {
                             LogUtils.warn(TAG, "流管理 resumed 的 previd 不一致，回退新会话", connection.boundJid, "expected=${state.lastResumePreviousId}", "actual=${frame.previousId}")
                             invalidateSessionForEnable(state)
+
                             return PreBindNegotiationResult.FALLBACK_TO_BIND
                         }
+
                         LogUtils.warn(TAG, "流管理绑定前恢复成功", connection.boundJid, "acked=${frame.handledByServer}")
                         replayUnackedAfterResume(connection.boundJid, state) { xml -> transport.sendRawFrame(xml) }
+
                         return PreBindNegotiationResult.ACCEPTED
                     }
 
                     is InboundFrame.Failed -> {
                         LogUtils.warn(TAG, "流管理绑定前恢复失败，回退新会话", connection.boundJid, "acked=${frame.handledByServer ?: "<none>"}")
+
                         return PreBindNegotiationResult.FALLBACK_TO_BIND
                     }
 
@@ -101,13 +106,12 @@ class StreamManagementComponent internal constructor(
                         LogUtils.debug(TAG, "绑定前收到服务端 Ack 请求并已响应", connection.boundJid, "h=${state.inboundHandledCount}")
                     }
 
-                    is InboundFrame.Acknowledged ->
-                        LogUtils.debug(TAG, "绑定前收到服务端确认", connection.boundJid, "acked=${frame.handledByServer}")
+                    is InboundFrame.Acknowledged -> LogUtils.debug(TAG, "绑定前收到服务端确认", connection.boundJid, "acked=${frame.handledByServer}")
 
-                    is InboundFrame.Enabled ->
-                        LogUtils.warn(TAG, "绑定前收到 unexpected enabled，继续等待 resume 结果", connection.boundJid, "sessionId=${frame.id ?: "<none>"}")
+                    is InboundFrame.Enabled -> LogUtils.warn(TAG, "绑定前收到 unexpected enabled，继续等待 resume 结果", connection.boundJid, "sessionId=${frame.id ?: "<none>"}")
                 }
             }
+
             LogUtils.warn(TAG, "流管理绑定前恢复等待超限，回退新会话", connection.boundJid)
             PreBindNegotiationResult.FALLBACK_TO_BIND
         }.getOrElse { error ->

@@ -9,25 +9,33 @@
 ## 文档定位
 
 本文档用于定义 Takina v1 的规范语义
+
 本文档不是实现计划
+
 本文档优先解决边界与一致性问题
 
 ---
 
 ## 设计目标
 
-1. 稳定内核
+### 稳定内核
+
 连接 认证 收发 状态 错误语义保持一致
 
-2. 统一扩展
+### 统一扩展
+
 组件与插件合并为统一抽象
 
-3. 协作式边界
+### 协作式边界
 库负责协议正确性与运行时一致性
+
+
 用户负责存储与产品语义
 
-4. 开箱即用与强定制并存
+### 开箱即用与强定制并存
+
 默认预设即可运行
+
 高级用户可按作用域精细控制
 
 ---
@@ -41,17 +49,21 @@ API简明实用，库开箱即用
 ### 稳固
 
 协程化 API
+
 类型化错误
+
 可观测节点执行
 
 ### 协作式
 
 库只负责XMPP领域，不参与任何产品语义（如具体的消息存储、会话管理等）
+
 库提供必要的功能接口给库用户交互（如流管理的跨进程恢复协作式接口）
 
 ### 语义先行
 
 先冻结规则再写实现
+
 禁止先写功能后补语义
 
 ---
@@ -83,17 +95,31 @@ DSL 内不再提供 `installPreset` 同义入口
 
 ```kotlin
 fun createTakina(
-  preset: FeaturePreset = FeaturePreset.Recommended,
+  featurePreset: FeaturePreset = FeaturePreset.Recommended,
+  configPreset: ConfigPreset = ConfigPreset.Default,
   init: TakinaConfiguration.() -> Unit,
 ): Takina
 ```
 
 允许在 DSL 内做增量覆盖
+
 不允许出现双入口冲突
+
+预设分层冻结如下：
+
+- `FeaturePreset`：控制安装集、节点启停、默认排序
+- `ConfigPreset`：控制超时、重连、观测、默认策略等运行参数
+
+建议保留三档 feature 预设：
+
+- `FeaturePreset.Minimal`
+- `FeaturePreset.Recommended`
+- `FeaturePreset.Full`
 
 ### 统一扩展抽象
 
 统一用 `Feature` 表达扩展
+
 一个 Feature 可同时提供以下能力
 
 - api surface
@@ -124,9 +150,34 @@ interface TakinaFeature {
 
 术语统一使用 `安装`，不混用 注册 与 安装
 
+### Feature 拓扑约束
+
+Feature 允许声明依赖与互斥：
+
+```kotlin
+interface TakinaFeature {
+  val requires: Set<FeatureKey>
+  val optionalRequires: Set<FeatureKey>
+  val conflictsWith: Set<FeatureKey>
+}
+```
+
+安装期必须执行拓扑校验并在失败时拒绝启动，错误需结构化：
+
+```kotlin
+data class FeatureTopologyError(
+  val code: String,
+  val feature: FeatureKey,
+  val missing: Set<FeatureKey>,
+  val conflicts: Set<FeatureKey>,
+  val cycle: List<FeatureKey>?,
+)
+```
+
 ### 两层控制面
 
 先 Control Plane 再 Execution Plane
+
 优先级固定为
 
 `能力开关 > 节点开关 > 节点排序`
@@ -159,6 +210,7 @@ interface TakinaFeature {
 ### 配置生效时机
 
 配置变更只影响未来事件
+
 不追溯历史
 
 运行时生效类型固定为以下三种
@@ -170,6 +222,16 @@ interface TakinaFeature {
 另有构建期不可变类型
 
 - `BUILD_TIME_IMMUTABLE`（变更必须拒绝）
+
+全配置项应以字段级元数据维护：
+
+```kotlin
+data class ConfigMeta(
+  val path: String,
+  val applyMode: ApplyMode,
+  val mutable: Boolean,
+)
+```
 
 #### v1 生效矩阵（冻结）
 
@@ -198,7 +260,9 @@ interface TakinaFeature {
 ### 动态开关
 
 普通节点允许热切换
+
 协议关键能力可限制为重连生效
+
 所有配置变更必须发运行时变更事件
 
 ### 行为矩阵
@@ -214,7 +278,25 @@ interface TakinaFeature {
 ### 事件模型（v1 精简刚需）
 
 v1 只保留事实级事件
+
 步骤级细粒度事件不进入 core
+
+事件基底最小字段集冻结为：
+
+```kotlin
+interface TakinaEvent {
+  val eventId: String
+  val occurredAt: Instant
+  val type: String
+}
+```
+
+约束：
+
+- `eventId` 用于溯源、去重、跨日志关联
+- `occurredAt` 表示事件语义发生时间
+- `owner` / `connectionId` / `correlationId` 不进入事件基底，由具体事件按需携带
+- 若事件总线存在异步分发时间，放在 envelope，不写入事件基底
 
 #### Core 事件（内置）
 
@@ -256,6 +338,24 @@ v1 只保留事实级事件
 
 更多能力的事件暂不列出，实现时按我们的习惯类推即可
 
+### 错误码与 retryable
+
+错误码格式：
+
+- `TAKINA-<DOMAIN>-<NNN>`
+
+`DOMAIN` 建议值：
+
+- `TRANSPORT` `TLS` `STREAM` `AUTH` `BIND` `SM` `TIMEOUT` `CANCELLED` `FEATURE` `PIPELINE` `STORE` `CONFIG` `INTERNAL`
+
+`retryable` 语义冻结为：
+
+- `retryable` 是错误分类标签，不是执行动作
+- `TakinaError` 不提供 `retry()` 之类动作接口
+- 重试由请求侧通过再次 `send()` 触发
+- 库内策略与用户侧都可基于该标签决定是否重试
+- 认证硬错误、配置非法默认不可重试；网络抖动、临时超时默认可重试
+
 ### 可解释性与观测
 
 必须提供 introspection
@@ -263,6 +363,16 @@ v1 只保留事实级事件
 - `describeActiveFeatures(scope)`
 - `describeActivePipeline(direction, scope)`
 - `explainWhyEnabled(target, scope)`
+
+返回字段最小稳定集：
+
+- `target`
+- `scope`
+- `installed`
+- `enabled`
+- `reasonChain`
+- `applyMode`（适用时）
+- `order`（节点场景）
 
 节点执行必须暴露基础指标
 
@@ -300,6 +410,7 @@ Inbound Raw Frame
 ```
 
 控制帧默认不进入业务 stanza 事件流
+
 控制帧可进入 raw 事件流与控制事件流
 
 ### 出站分流
@@ -314,6 +425,7 @@ Outbound Command
 ```
 
 默认仅对 Business Outbound 开放用户自定义节点
+
 Control Outbound 默认只开放观测与有限改写点
 
 ### 建议阶段
@@ -329,6 +441,7 @@ Business outbound
 ### 加密策略层级
 
 保留单消息配置。目前API设计：
+
 消息DSL必须在每次发消息前拉取最新提供者，确保加密配置正确
 
 ```kotlin
@@ -350,7 +463,9 @@ takina/* or specific handle */.request.message {
 ### 自动 OMEMO 解密
 
 自动解密作为可插拔节点
+
 解密失败不吞消息
+
 必须发失败事件并带 raw 与原因
 
 ---
@@ -377,13 +492,17 @@ takina/* or specific handle */.request.message {
 ### 句柄边界
 
 句柄是 facade 与 context
+
 不是独立状态机
+
 所有动作最终进入统一 request 与 pipeline runtime
 
 ### 句柄配置生效
 
 执行 DSL 完成后按 applyMode 生效
+
 能即时就即时
+
 不能即时则下条或下次连接生效
 
 ---
@@ -413,6 +532,7 @@ takina/* or specific handle */.request.message {
 
 .runtime：用于承载状态与运行信息
 - 如 `accountStates` `connectionStates` `activePipeline` `health`
+- `accountStates` 与 `connectionStates` 为只读 `StateFlow`，支持 `collect` 与 `.value` 快照读取
 
 .events 下的方法与属性：
 
@@ -420,13 +540,53 @@ takina/* or specific handle */.request.message {
 - `.events.once(Event){}`
 - `.events.removeOn(Event){}`
 - `.events.flow(Event): Flow<Event>`
-- `.events.enableEventLog: Boolean`（这样设置虽然直观，但会不会略显粗糙，而且只有全局粒度。是否变为在config或者是capability里设置更好？）
+
+事件日志开关归属 `config.observability`，不放在 `.events`
 
 .request 下的方法：
 
 - `.request.message { ... } : PendingMessageRequest`
 - `.request.presence { ... } : PendingPresenceRequest`
 - `.request.iq { ... } : PendingIqRequest`
+
+请求执行语义（冻结）：
+
+- `send()` 为 `suspend`，返回 `TakinaResult<Outcome>` 最终结果
+- 我们不提供内部排队池，这块应由用户负责，并发等亦由用户协程承担
+- 取消仅作用于本地未完成请求，不回滚已发出的协议帧（时光无法倒流）
+- 重试仅在 `retryable = true` 且重试策略允许时发生
+- `TakinaError` 仅提供错误分类信息，不提供动作型 `retry()`
+
+`TakinaResult` 冻结为：
+
+```kotlin
+sealed interface TakinaResult<out T> {
+  data class Ok<T>(val value: T, val meta: ResultMeta = ResultMeta()) : TakinaResult<T>
+  data class Err(val error: TakinaError, val meta: ResultMeta = ResultMeta()) : TakinaResult<Nothing>
+}
+
+data class ResultMeta(
+  val correlationId: String?,
+  val retryCount: Int = 0,
+  val elapsed: Duration? = null,
+)
+```
+
+注册功能设定（冻结）：
+
+注册是打算在独立的轻量级连接上进行的，注册成功后用户可选择（通过调用API）把账号变成正式的
+
+```kotlin
+suspend fun RegistrationApi.newSession(
+  init: RegistrationSessionDsl.() -> Unit
+): TakinaResult<RegistrationOutcome>
+```
+
+注册 DSL 约束：
+
+- `onFillForm` / `onCaptcha` 为 `suspend` 回调，允许等待 UI/人工输入
+- `onXxx` 回调使用接收器模式，用户通过字段（如`form["password"]`、`.verificationCode`访问玩意儿）
+- `onSuccess` 有类似`addAccount {}`的Api`promoteToAccount {}`（升级/移交为正式账号），其内部失败，不回滚“注册已成功”事实
 
 账号句柄的方法：
 
@@ -436,9 +596,12 @@ takina/* or specific handle */.request.message {
 - `suspend accountHandle.connect()`
 - `suspend accountHandle.disconnect()`
 
-获取功能的API：
+获取功能的 API：
 
-- `takina.[FEARURE_NAME] : FeatureApi`：如 `takina.omemo`、`takina.streamManagement`
+- `takina.[FEATURE_NAME]: FeatureApi`：如 `takina.omemo`、`takina.streamManagement`
+- feature 能力请求与统一请求入口可并存，结果语义保持一致
+- `takina.<featureApi>...` 强调能力边界
+- `takina.request.<featureRequest>...` 强调统一核心入口
 
 说明：
 
@@ -478,15 +641,28 @@ takina/* or specific handle */.request.message {
 
 状态变化必须发 `ConnectionStateChangedEvent`
 
+状态迁移约束：
+
+- 必须提供正式迁移图（含异常路径）
+- 非法迁移必须拒绝并发出结构化错误与异常事件
+- `FAILED` 仅可由不可恢复错误进入
+- `REMOVED` 仅可在账号脱离活跃连接后进入
+
 ### 断线与重连策略（冻结）
 
 非用户主动断开时
 
 - 默认启用自动重连（`FeaturePreset.Recommended`）
-- 启用流管理时先尝试 `RESUMING_SM`
-- 流管理恢复失败则降级为完整重连
+- 启用流管理时先执行 `StreamManagementFeature` 的内部恢复流程
+- SM 恢复成功则核心重连不介入
+- SM 恢复失败则降级为核心完整重连
 - 未启用流管理则直接完整重连
 - 认证硬错误（如凭据错误）进入 `FAILED`，不进行无限重试
+
+重放边界：
+
+- SM 恢复期间的确认与补偿由 SM feature 内部处理，不属于核心重连的范畴（在其之前！）
+- 仅当 SM 失败或未启用时，核心重连才接管后续重发/丢弃策略
 
 重连配置入口
 
@@ -516,9 +692,10 @@ takina/* or specific handle */.request.message {
 - `OmemoStateStore`
 - `StreamManagementStateStore`
 
-### 另
+### 另外
 
 不提供会话能力，用户须自行管理任何会话内容
+
 用户可以创建并安装自己的 feature，以实现自定义能力
 
 ---
@@ -531,15 +708,23 @@ takina/* or specific handle */.request.message {
 - `@TakinaExperimentalApi`
 - `@TakinaInternalApi`
 
+注解语义冻结：
+
+- 新能力默认 `@TakinaExperimentalApi`
+- `Experimental` 允许在 minor 周期内做破坏性调整
+- 升级为 `Stable` 前必须具备稳定文档、测试覆盖与迁移说明
+
 ### 版本语义
 
 `0.x`（目前）：快速演进中
 `1.0`起：遵循 SemVer
 
-### 迁移策略
+#### 0.x的迁移策略
 
 旧 API 先 warning deprecate
+
 至少保留一个 minor 周期
+
 提供迁移说明与示例
 
 ---
@@ -548,7 +733,10 @@ takina/* or specific handle */.request.message {
 
 ```kotlin
 // 基本所有的dsl的字段设置，都有Provider模式，如：password { secret }
-val takina = createTakina(preset = FeaturePreset.Recommended) {
+val takina = createTakina(
+  featurePreset = FeaturePreset.Recommended,
+  configPreset = ConfigPreset.Default,
+) {
   addAccount {
     jid = "alice@example.com".toBareJid()
     password = secret
@@ -608,10 +796,12 @@ alice.request.message {
   encryption { provider = omemoProvider() }
 }.send()
 
-// HACK：runtime的xxxStates是不是支持`.value`
+// runtime 状态流支持 collect 与 .value 快照
 takina.runtime.connectionStates.collect { states ->
   println(states)
 }
+val connectionSnapshot = takina.runtime.connectionStates.value
+println(connectionSnapshot)
 
 alice.capability/* or defaults, etc */ {} // 管理配置，对未来生效
 
@@ -623,27 +813,16 @@ takina.omemo.bootstrapLocalDevice { user = "bob@example.com".toBareJid() }
 alice.omemo.bootstrapLocalDevice()
 
 // 能力的包的构建，与能力对`.request`的扩展（便捷入口）
-takina.httpUpload.requestSlotAwait{ /*DSL*/ }.send()
+takina.httpUpload.requestHttpUploadSlotAwait{ /*DSL*/ }.send() // FeatureApi 入口，强调能力边界
 // OR
-takina.request.requestHttpUploadSlot{ /*DSL*/ }.send()
+takina.request.httpUploadSlot{ /*DSL*/ }.send() // 统一 request 入口，强调统一核心
 ```
 
 ---
 
 ## 待明确
 
-1. 事件 payload 字段定义（每个事件类的最小字段集）
-2. 错误码总表与 retryable 判定规则
-3. 全配置项 `applyMode` 明细表（逐字段）
-4. `FeaturePreset.Minimal/Recommended/Full` 的 feature 与节点排序清单
-5. Feature 依赖/互斥规则与拓扑报错格式
-6. 请求超时、取消、重试、幂等语义
-7. 重连与流管理下的队列重放边界（重发/丢弃规则）
-8. introspection 返回结构（`describe*`）与稳定字段
-9. 状态机迁移图（含异常路径）
-10. Experimental 能力边界与注解策略（如注册能力）
-11. `TakinaResult` 具体定义
-12. 带内注册（Registration）能力语义：在dsl（takina.registration.newSession(host,port){}）里面完成注册表单填写、验证流程，功能将在独立轻量连接中完成注册；用户可在注册成功后`升级`连接为正式账号连接
+暂无
 
 ---
 
@@ -656,4 +835,5 @@ takina.request.requestHttpUploadSlot{ /*DSL*/ }.send()
 ## 结论
 
 Takina v1 的核心是先冻结语义边界
+
 在此基础上再推进实现细节（避免后续重构爆炸）

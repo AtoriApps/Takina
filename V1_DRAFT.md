@@ -879,14 +879,15 @@ takina/
 │     │  ├─ core/
 │     │  │  ├─ api/ # Takina/createTakina/handles
 │     │  │  ├─ bootstrap/ # preset 合并、安装冻结、拓扑校验
-│     │  │  ├─ control/ # scope/capability/config applyMode
-│     │  │  ├─ pipeline/ # inbound/outbound runtime + metrics
-│     │  │  ├─ request/ # message/presence/iq + TakinaResult
-│     │  │  ├─ connection/ # FSM + reconnect orchestrator
-│     │  │  ├─ runtime/ # StateFlow + introspection
 │     │  │  ├─ events/ # 事实事件总线
+│     │  │  ├─ request/ # message/presence/iq + TakinaResult
+│     │  │  ├─ runtime/ # StateFlow + introspection
+│     │  │  ├─ connection/ # FSM + reconnect orchestrator
+│     │  │  ├─ pipeline/ # inbound/outbound runtime + metrics
+│     │  │  ├─ control/ # scope/capability/config applyMode
 │     │  │  ├─ error/ # TAKINA-<DOMAIN>-<NNN>
-│     │  │  └─ feature/ # Feature 抽象、registry、manifest
+│     │  │  ├─ feature/ # Feature 抽象、registry、manifest
+│     │  │  └─ xml/ # XML构造和解析，内部自用
 │     │  └─ features/
 │     │     ├─ sm/ # [首批功能] XEP-0198
 │     │     ├─ csi/ # [首批功能] XEP-0352

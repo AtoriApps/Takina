@@ -1,12 +1,17 @@
 [versions]
 kotlin = "2.3.10"
 kotlinx-coroutines = "1.10.2"
+kotlinx-datetime = "0.7.1"
 signal-protocol = "2.8.1"
+junit4 = "4.13.2"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 signal-protocol = { module = "org.whispersystems:signal-protocol-java", version.ref = "signal-protocol" }
+junit4 = { module = "junit:junit", version.ref = "junit4" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

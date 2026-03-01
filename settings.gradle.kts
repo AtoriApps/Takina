@@ -20,4 +20,5 @@ include(
     ":takina-examples-old",
 
     ":takina-core",
+    ":takina-tests",
 )

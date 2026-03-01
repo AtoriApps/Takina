@@ -1,6 +1,6 @@
 # Takina
 
-[中文](./README.md)：中文版是最勤更新的
+[中文](OLD_README.md)：中文版是最勤更新的
 
 ![Banner](./TAKINA_BANNER.svg)
 
@@ -90,9 +90,9 @@ takina.disconnectAll()
 
 ### Advanced Usage
 
-For detailed usage of advanced components such as **Message Receipts**, **Stream Management (XEP-0198)**, **Message Carbons (XEP-0280)**, and **OMEMO End-to-End Encryption (XEP-0384)**, please refer to the **[Detailed Usage Guide](./GUIDE.md)**
+For detailed usage of advanced components such as **Message Receipts**, **Stream Management (XEP-0198)**, **Message Carbons (XEP-0280)**, and **OMEMO End-to-End Encryption (XEP-0384)**, please refer to the **[Detailed Usage Guide](OLD_GUIDE.md)**
 
-For the full API reference, please see **[this document](./API_REFERENCE.md)**
+For the full API reference, please see **[this document](OLD_API_REFERENCE.md)**
 
 ## Build and Test
 

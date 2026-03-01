@@ -1,6 +1,6 @@
 # 详细使用指南
 
-本文档详细介绍了 Takina 各个核心扩展组件（XEPs）的配置与使用方法。如果您还没有完成基础的连接与登录，请先阅读 [README.md](./README.md) 中的快速上手部分
+本文档详细介绍了 Takina 各个核心扩展组件（XEPs）的配置与使用方法。如果您还没有完成基础的连接与登录，请先阅读 [README.md](OLD_README.md) 中的快速上手部分
 
 ## 目录
 1. [消息回执 (Message Receipts)](#1-消息回执-message-receipts)

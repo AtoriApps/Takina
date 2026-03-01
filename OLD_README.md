@@ -1,6 +1,6 @@
 # Takina
 
-[English](./README_EN.md): Outdated, for the latest information, please refer to this Chinese version
+[English](OLD_README_EN.md): Outdated, for the latest information, please refer to this Chinese version
 
 ![Banner](./TAKINA_BANNER.svg)
 
@@ -89,9 +89,9 @@ takina.disconnectAll()
 
 ### 进阶使用
 
-关于 **消息回执**、**流管理 (XEP-0198)**、**消息漫游 (XEP-0280)** 以及 **OMEMO 端到端加密 (XEP-0384)** 等高级组件的详细用法，请参阅**[详细使用指南](./GUIDE.md)**
+关于 **消息回执**、**流管理 (XEP-0198)**、**消息漫游 (XEP-0280)** 以及 **OMEMO 端到端加密 (XEP-0384)** 等高级组件的详细用法，请参阅**[详细使用指南](OLD_GUIDE.md)**
 
-全部的API参考，请查看[本文档](./API_REFERENCE.md)
+全部的API参考，请查看[本文档](OLD_API_REFERENCE.md)
 
 ## 编译与测试
 

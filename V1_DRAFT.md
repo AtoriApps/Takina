@@ -1,8 +1,6 @@
 # Takina v1 草案
 
-> Status: Draft and actively refined
-> Target: v1
-> Purpose: freeze semantics first and implement later
+Takina（org.atoriapps.takina.*）是Kotlin Multiplatform XMPP 库
 
 ---
 
@@ -82,9 +80,7 @@ API简明实用，库开箱即用
 
 ---
 
-## 已冻结规范
-
-本节全部为 Normative
+## 大规范
 
 ### 创建入口与预设
 
@@ -205,7 +201,7 @@ data class FeatureTopologyError(
 1. Feature 是否已安装
 2. Feature 在当前 scope 是否启用
 3. Node 在当前 scope 是否启用
-4. 对启用节点做排序并执行
+4. 对启用节点做排序并执行[CapsLockSwithLang.ahk](../../../d_docs/AutoHotkey/CapsLockSwithLang.ahk)
 
 ### 配置生效时机
 
@@ -255,7 +251,7 @@ data class ConfigMeta(
 | 事件订阅过滤器 | `IMMEDIATE` |
 | 不涉及协商的纯 API 能力开关 | `IMMEDIATE` |
 | 涉及协商的能力开关 | `NEXT_CONNECTION` |
-| `features { install(...) }` 安装集 | `BUILD_TIME_IMMUTABLE` |
+| `features { install(...) }` 安装集 | `BUILD_TIME_IMMUTABLE` |sd是sss发
 
 ### 动态开关
 
@@ -519,11 +515,11 @@ room.join {}
 
 ---
 
-## API 命名规范
+## API 定义
 
 （以下为规范化的必有的，但不代表最后仅有它们，如果要有更多合理的，未来实现并添加）
 
-顶层固定入口与动作
+### 顶层固定入口与动作
 
 字段：
 
@@ -569,37 +565,6 @@ room.join {}
 - 重试仅在 `retryable = true` 且重试策略允许时发生
 - `TakinaError` 仅提供错误分类信息，不提供动作型 `retry()`
 
-`TakinaResult` 冻结为：
-
-```kotlin
-sealed interface TakinaResult<out T> {
-  data class Ok<T>(val value: T, val meta: ResultMeta = ResultMeta()) : TakinaResult<T>
-  data class Err(val error: TakinaError, val meta: ResultMeta = ResultMeta()) : TakinaResult<Nothing>
-}
-
-data class ResultMeta(
-  val correlationId: String?,
-  val retryCount: Int = 0,
-  val elapsed: Duration? = null,
-)
-```
-
-注册功能设定（冻结）：
-
-注册是打算在独立的轻量级连接上进行的，注册成功后用户可选择（通过调用API）把账号变成正式的
-
-```kotlin
-suspend fun RegistrationApi.newSession(
-  init: RegistrationSessionDsl.() -> Unit
-): TakinaResult<RegistrationOutcome>
-```
-
-注册 DSL 约束：
-
-- `onFillForm` / `onCaptcha` 为 `suspend` 回调，允许等待 UI/人工输入
-- `onXxx` 回调使用接收器模式，用户通过字段（如`form["password"]`、`.verificationCode`访问玩意儿）
-- `onSuccess` 有类似`addAccount {}`的Api`promoteToAccount {}`（升级/移交为正式账号），其内部失败，不回滚“注册已成功”事实
-
 账号句柄的方法：
 
 - `accountHandle.request`
@@ -619,6 +584,37 @@ suspend fun RegistrationApi.newSession(
 
 - 顶层与账号级配置都允许运行时变更
 - 生效时机由对应配置项 `applyMode` 决定
+
+### TakinaResult
+
+```kotlin
+sealed interface TakinaResult<out T> {
+  data class Ok<T>(val value: T, val meta: ResultMeta = ResultMeta()) : TakinaResult<T>
+  data class Err(val error: TakinaError, val meta: ResultMeta = ResultMeta()) : TakinaResult<Nothing>
+}
+
+data class ResultMeta(
+  val correlationId: String?,
+  val retryCount: Int = 0,
+  val elapsed: Duration? = null,
+)
+```
+
+### 注册功能设定
+
+注册是打算在独立的轻量级连接上进行的，注册成功后用户可选择（通过调用API）把账号变成正式的
+
+```kotlin
+suspend fun RegistrationApi.newSession(
+  init: RegistrationSessionDsl.() -> Unit
+): TakinaResult<RegistrationOutcome>
+```
+
+注册 DSL 约束：
+
+- `onFillForm` / `onCaptcha` 为 `suspend` 回调，允许等待 UI/人工输入
+- `onXxx` 回调使用接收器模式，用户通过字段（如`form["password"]`、`verificationCode`访问玩意儿）
+- `onSuccess` 有类似`addAccount {}`的Api`promoteToAccount {}`（升级/移交为正式账号），其内部失败，不回滚“注册已成功”事实
 
 ---
 
@@ -743,6 +739,8 @@ suspend fun RegistrationApi.newSession(
 
 ## 示例图景
 
+全面用例：
+
 ```kotlin
 // 基本所有的dsl的字段设置，都有Provider模式，如：password { secret }
 val takina = createTakina(
@@ -794,7 +792,7 @@ val takina = createTakina(
 val alice = takina.forAccount("alice@example.com".toBareJid())
 val room = alice.muc("a@conference.example.com".toBareJid())
 
-takina./* suspend fun */connectAll()/* :TakinaResult<...> */.getOrThrow()
+takina./* suspend fun */connectAll()
 
 alice.events.on<MessageEvents.Received> { event ->
   println(event.message.body)
@@ -828,6 +826,98 @@ alice.omemo.bootstrapLocalDevice()
 takina.httpUpload.requestHttpUploadSlotAwait{ /*DSL*/ }.send() // FeatureApi 入口，强调能力边界
 // OR
 takina.request.httpUploadSlot{ /*DSL*/ }.send() // 统一 request 入口，强调统一核心
+
+// 注册：
+takina.registration.newSession {
+    host = "114514.com"
+    // port, security 等依旧可不填
+
+    onFillForm = {
+        form["jid"] = "114514"
+        form["password"] = 1919810
+    }
+
+    onCaptcha = {
+        识别验证码(verificationCode) // 返回String
+    }
+
+    onSuccess = {
+        promoteToAccount {
+            // config {} ...
+        }
+    }
+}
+```
+
+最简用例：
+
+```kotlin
+val takina = createTakina {
+  addAccount {
+    jid = "alice@example.com".toBareJid()
+    password = secret
+  }
+}
+
+takina.connectAll()
+
+takina.request.message {
+  to = "bob@example.com".toBareJid()
+  body = "hello"
+}.send()
+```
+
+---
+
+## 库架构和开发计划
+
+```
+takina/
+├─ takina-core/ # KMP + 全部内建 features
+│  └─ src/
+│     ├─ commonMain/kotlin/org/atoriapps/takina/
+│     │  ├─ core/
+│     │  │  ├─ api/ # Takina/createTakina/handles
+│     │  │  ├─ bootstrap/ # preset 合并、安装冻结、拓扑校验
+│     │  │  ├─ control/ # scope/capability/config applyMode
+│     │  │  ├─ pipeline/ # inbound/outbound runtime + metrics
+│     │  │  ├─ request/ # message/presence/iq + TakinaResult
+│     │  │  ├─ connection/ # FSM + reconnect orchestrator
+│     │  │  ├─ runtime/ # StateFlow + introspection
+│     │  │  ├─ events/ # 事实事件总线
+│     │  │  ├─ error/ # TAKINA-<DOMAIN>-<NNN>
+│     │  │  └─ feature/ # Feature 抽象、registry、manifest
+│     │  └─ features/
+│     │     ├─ sm/ # [首批功能] XEP-0198
+│     │     ├─ csi/ # [首批功能] XEP-0352
+│     │     ├─ carbons/ # [首批功能] XEP-0280
+│     │     ├─ mam/ # [首批功能] XEP-0313 (+XEP-0059) + [最后一批功能] XEP-0431
+│     │     ├─ muc/ # [首批功能] XEP-0045 (+XEP-0249 +XEP-0410)
+│     │     ├─ httpupload/ # [首批功能] XEP-0363
+│     │     ├─ omemo/ # [首批功能] XEP-0384(+XEP-0420), 命名空间兼容 :2/:legacy
+│     │     ├─ blocking/ # [首批功能] XEP-0191
+│     │     ├─ receipts/ # [首批功能] XEP-0184
+│     │     ├─ chatstates/ # [首批功能] XEP-0085
+│     │     ├─ correction/ # [首批功能] XEP-0308
+│     │     ├─ markers/ # [首批功能] XEP-0333
+│     │     ├─ bookmarks2/ # [首批功能] XEP-0402
+│     │     ├─ avatar/ # [首批功能] XEP-0084 (+XEP-0398/+XEP-0153 兼容)
+│     │     ├─ registration/ # [第二批功能] XEP-0077
+│     │     ├─ retract/ # [第二批功能] XEP-0424
+│     │     ├─ moderation/ # [第二批功能] XEP-0425 (+XEP-0421/+XEP-0428)
+│     │     ├─ reactions/ # [第二批功能] XEP-0444
+│     │     ├─ bind2/ # [第二批功能] XEP-0386
+│     │     ├─ push/ # [最后一批功能] XEP-0357
+│     │     ├─ jingle-av/ # [最后一批功能] XEP-0167/0176/0320/0293/0294/0338/0339
+│     │     ├─ jingle-ft/ # [最后一批功能] XEP-0234/0261
+│     │     ├─ openpgp/ # [最后一批功能] XEP-0373/0374
+│     │     ├─ mix/ # [最后一批功能] XEP-0369
+│     │     ├─ inbox/ # [最后一批功能] XEP-0430
+│     ├─ commonTest/kotlin/ # 语义单测（规则矩阵/状态迁移）
+│     ├─ jvmMain/kotlin/org/atoriapps/takina/ # TCP/TLS/XML/平台实现
+│     └─ jvmTest/kotlin/ # 平台单测
+├─ takina-tests/ # 集成、冒烟测试（独立）
+└─ takina-examples/ # 实际使用例（独立）
 ```
 
 ---
@@ -843,9 +933,3 @@ takina.request.httpUploadSlot{ /*DSL*/ }.send() // 统一 request 入口，强�
 暂无
 
 ---
-
-## 结论
-
-Takina v1 的核心是先冻结语义边界
-
-在此基础上再推进实现细节（避免后续重构爆炸）

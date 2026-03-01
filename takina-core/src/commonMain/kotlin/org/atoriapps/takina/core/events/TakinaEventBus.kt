@@ -8,7 +8,10 @@ import kotlin.reflect.KClass
 class EventSubscription internal constructor(
     val id: Long,
     val eventClass: KClass<out TakinaEvent>,
-)
+    val boundBus: TakinaEventBus
+) {
+    fun remove() = boundBus.remove(this)
+}
 
 class TakinaEventBus {
     private var sequence: Long = 0
@@ -22,36 +25,42 @@ class TakinaEventBus {
 
     fun <T : TakinaEvent> on(type: KClass<T>, handler: T.() -> Unit): EventSubscription {
         val id = ++sequence
+
         val typed: (TakinaEvent) -> Unit = { event ->
             if (type.isInstance(event)) {
                 @Suppress("UNCHECKED_CAST")
                 (event as T).handler()
             }
         }
+
         handlers.getOrPut(type) { linkedMapOf() }[id] = typed
-        return EventSubscription(id = id, eventClass = type)
+
+        return EventSubscription(id, type, this)
     }
 
-    fun <T : TakinaEvent> on(type: TakinaEventType<T>, handler: T.() -> Unit): EventSubscription = on(type.kClass, handler)
+    fun <T : TakinaEvent> on(type: TakinaEventProvider<T>, handler: T.() -> Unit): EventSubscription = on(type.eventClass, handler)
 
-    fun <T : TakinaEvent> once(type: KClass<T>, handler: T.()  -> Unit): EventSubscription {
+    fun <T : TakinaEvent> once(type: KClass<T>, handler: T.() -> Unit): EventSubscription {
         var subscription: EventSubscription? = null
+
         subscription = on(type) {
-            removeOn(subscription!!)
+            subscription!!.remove()
             handler()
         }
+
         return subscription
     }
 
-    fun <T : TakinaEvent> once(type: TakinaEventType<T>, handler: T.() -> Unit): EventSubscription = once(type.kClass, handler)
+    fun <T : TakinaEvent> once(type: TakinaEventProvider<T>, handler: T.() -> Unit): EventSubscription = once(type.eventClass, handler)
 
-    fun removeOn(subscription: EventSubscription) {
+    // TIPS：不再可通过Handler移除，只能通过订阅
+    fun remove(subscription: EventSubscription) {
         handlers[subscription.eventClass]?.remove(subscription.id)
     }
 
     fun <T : TakinaEvent> flow(type: KClass<T>): Flow<T> = stream.filterIsInstance(type)
 
-    fun <T : TakinaEvent> flow(type: TakinaEventType<T>): Flow<T> = flow(type.kClass)
+    fun <T : TakinaEvent> flow(type: TakinaEventProvider<T>): Flow<T> = flow(type.eventClass)
 }
 
 inline fun <reified T : TakinaEvent> TakinaEventBus.on(noinline handler: (T) -> Unit): EventSubscription = on(T::class, handler)

@@ -82,6 +82,7 @@ object FeatureTopologyValidator {
             val cycle = dfs(feature.key)
             if (cycle != null) return cycle
         }
+
         return null
     }
 }

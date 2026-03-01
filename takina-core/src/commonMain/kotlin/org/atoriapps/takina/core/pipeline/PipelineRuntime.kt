@@ -3,7 +3,7 @@ package org.atoriapps.takina.core.pipeline
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.TimeSource
-import org.atoriapps.takina.core.control.ControlPlane
+import org.atoriapps.takina.core.controlling.ControlPlane
 import org.atoriapps.takina.core.feature.FeatureKey
 import org.atoriapps.takina.core.models.Scope
 
@@ -58,10 +58,7 @@ class PipelineRuntime(
 
     suspend fun executeInbound(frame: InboundFrame, scope: Scope): String? {
         val candidates = when (frame.classification) {
-            InboundClassification.CONTROL_SM,
-            InboundClassification.STREAM_META,
-            InboundClassification.STREAM_END,
-            -> inboundNodes.filter { it.controlOnly }
+            InboundClassification.CONTROL, InboundClassification.STREAM_META, InboundClassification.STREAM_END -> inboundNodes.filter { it.controlOnly }
 
             else -> inboundNodes.filterNot { it.controlOnly }
         }
@@ -99,6 +96,7 @@ class PipelineRuntime(
     suspend fun executeOutbound(frame: OutboundFrame, scope: Scope): String? {
         val candidates = when (frame.classification) {
             OutboundClassification.BUSINESS -> outboundNodes.filterNot { it.controlOnly }
+
             OutboundClassification.CONTROL -> outboundNodes.filter { it.controlOnly }
         }
 
@@ -111,10 +109,8 @@ class PipelineRuntime(
         var current = frame.raw
         for (state in sorted) {
             val registration = candidates.first { it.node.key == state.nodeKey }
-            if (frame.classification == OutboundClassification.CONTROL && registration.userCustom) {
-                // Control outbound keeps extension surface constrained by default.
-                continue
-            }
+            if (frame.classification == OutboundClassification.CONTROL && registration.userCustom) continue
+
             val metric = nodeMetrics.getOrPut(state.nodeKey) { MutableMetrics() }
             val mark = TimeSource.Monotonic.markNow()
             try {

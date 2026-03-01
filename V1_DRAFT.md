@@ -132,8 +132,8 @@ interface TakinaFeature {
   val supportedScopes: Set<ScopeKind>
   val applyMode: ApplyMode
 
-  fun onInstall(context: FeatureContext) {}
-  fun onShutdown(context: FeatureContext) {}
+  fun onInstall(context: Takina) {}
+  fun onShutdown(context: Takina) {}
 
   fun api(): FeatureApi? = null
     
@@ -201,7 +201,7 @@ data class FeatureTopologyError(
 1. Feature 是否已安装
 2. Feature 在当前 scope 是否启用
 3. Node 在当前 scope 是否启用
-4. 对启用节点做排序并执行[CapsLockSwithLang.ahk](../../../d_docs/AutoHotkey/CapsLockSwithLang.ahk)
+4. 对启用节点做排序并执行
 
 ### 配置生效时机
 
@@ -231,27 +231,27 @@ data class ConfigMeta(
 
 #### v1 生效矩阵（冻结）
 
-| 配置项 | 生效时机 |
-|---|---|
-| `connection.host` `connection.port` `securityMode` | `NEXT_CONNECTION` |
-| TLS 信任链与证书钉扎配置 | `NEXT_CONNECTION` |
-| SASL 机制与认证参数 | `NEXT_CONNECTION` |
-| 资源绑定策略（resource） | `NEXT_CONNECTION` |
-| 压缩协商开关 | `NEXT_CONNECTION` |
-| `StreamManagementFeature` 启停与恢复策略 | `NEXT_CONNECTION` |
-| 握手阶段超时参数 | `NEXT_CONNECTION` |
-| 业务入站/出站节点启停 | `NEXT_ITEM` |
-| 业务入站/出站节点排序 | `NEXT_ITEM` |
-| 默认消息加密策略（global/account/conversation） | `NEXT_ITEM` |
-| 默认请求超时与重试参数 | `NEXT_ITEM` |
-| 未知帧处理策略 | `NEXT_ITEM` |
-| 自动重连开关 | `IMMEDIATE` |
-| 重连退避参数（delay/factor/jitter/maxAttempts） | `IMMEDIATE` |
-| 观测采样与告警阈值 | `IMMEDIATE` |
-| 事件订阅过滤器 | `IMMEDIATE` |
-| 不涉及协商的纯 API 能力开关 | `IMMEDIATE` |
-| 涉及协商的能力开关 | `NEXT_CONNECTION` |
-| `features { install(...) }` 安装集 | `BUILD_TIME_IMMUTABLE` |sd是sss发
+| 配置项                                                | 生效时机                   |
+|----------------------------------------------------|------------------------|
+| `connection.host` `connection.port` `securityMode` | `NEXT_CONNECTION`      |
+| TLS 信任链与证书钉扎配置                                     | `NEXT_CONNECTION`      |
+| SASL 机制与认证参数                                       | `NEXT_CONNECTION`      |
+| 资源绑定策略（resource）                                   | `NEXT_CONNECTION`      |
+| 压缩协商开关                                             | `NEXT_CONNECTION`      |
+| `StreamManagementFeature` 启停与恢复策略                  | `NEXT_CONNECTION`      |
+| 握手阶段超时参数                                           | `NEXT_CONNECTION`      |
+| 业务入站/出站节点启停                                        | `NEXT_ITEM`            |
+| 业务入站/出站节点排序                                        | `NEXT_ITEM`            |
+| 默认消息加密策略（global/account/conversation）              | `NEXT_ITEM`            |
+| 默认请求超时与重试参数                                        | `NEXT_ITEM`            |
+| 未知帧处理策略                                            | `NEXT_ITEM`            |
+| 自动重连开关                                             | `IMMEDIATE`            |
+| 重连退避参数（delay/factor/jitter/maxAttempts）            | `IMMEDIATE`            |
+| 观测采样与告警阈值                                          | `IMMEDIATE`            |
+| 事件订阅过滤器                                            | `IMMEDIATE`            |
+| 不涉及协商的纯 API 能力开关                                   | `IMMEDIATE`            |
+| 涉及协商的能力开关                                          | `NEXT_CONNECTION`      |
+| `features { install(...) }` 安装集                    | `BUILD_TIME_IMMUTABLE` |
 
 ### 动态开关
 
@@ -876,18 +876,18 @@ takina/
 ├─ takina-core/ # KMP + 全部内建 features
 │  └─ src/
 │     ├─ commonMain/kotlin/org/atoriapps/takina/
-│     │  ├─ core/
-│     │  │  ├─ api/ # Takina/createTakina/handles
-│     │  │  ├─ bootstrap/ # preset 合并、安装冻结、拓扑校验
-│     │  │  ├─ events/ # 事实事件总线
-│     │  │  ├─ request/ # message/presence/iq + TakinaResult
-│     │  │  ├─ runtime/ # StateFlow + introspection
-│     │  │  ├─ connection/ # FSM + reconnect orchestrator
-│     │  │  ├─ pipeline/ # inbound/outbound runtime + metrics
-│     │  │  ├─ control/ # scope/capability/config applyMode
-│     │  │  ├─ error/ # TAKINA-<DOMAIN>-<NNN>
-│     │  │  ├─ feature/ # Feature 抽象、registry、manifest
-│     │  │  └─ xml/ # XML构造和解析，内部自用
+│     │  ├─ core/ # 根目录下还有：Takina、createTakina、TakinaApiAndDsl
+│     │  │  ├─ bootstrap/
+│     │  │  ├─ connections/
+│     │  │  ├─ controlling/
+│     │  │  ├─ error/ # 错误定义
+│     │  │  ├─ events/ # 核心事件、事件基本定义、事件总线
+│     │  │  ├─ feature/ # 功能基本定义
+│     │  │  ├─ models/ # Jid、作用域、Id、TakinaResult
+│     │  │  ├─ pipeline/ # inbound/outbound 运行时 + 度量
+│     │  │  ├─ request/
+│     │  │  ├─ runtime/ # 可监听状态 + 自身状况检视
+│     │  │  └─ xml/ # XML构造和解析：内部自用
 │     │  └─ features/
 │     │     ├─ sm/ # [首批功能] XEP-0198
 │     │     ├─ csi/ # [首批功能] XEP-0352

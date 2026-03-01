@@ -3,10 +3,10 @@ package org.atoriapps.takina.core.runtime
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.atoriapps.takina.core.connection.AccountState
-import org.atoriapps.takina.core.connection.ConnectionState
-import org.atoriapps.takina.core.control.ControlPlane
-import org.atoriapps.takina.core.control.FeatureActivation
+import org.atoriapps.takina.core.connections.AccountState
+import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.controlling.ControlPlane
+import org.atoriapps.takina.core.controlling.FeatureActivation
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.pipeline.NodeMetrics

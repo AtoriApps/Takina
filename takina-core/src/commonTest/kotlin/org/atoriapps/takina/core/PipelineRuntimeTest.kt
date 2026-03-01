@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.atoriapps.takina.core.control.ControlPlane
+import org.atoriapps.takina.core.controlling.ControlPlane
 import org.atoriapps.takina.core.feature.FeatureRegistry
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.pipeline.InboundClassification
@@ -24,7 +24,7 @@ class PipelineRuntimeTest {
         assertEquals(InboundClassification.STANZA_MESSAGE, classifyInbound("<message id='1'/>"))
         assertEquals(InboundClassification.STANZA_PRESENCE, classifyInbound("<presence/>"))
         assertEquals(InboundClassification.STANZA_IQ, classifyInbound("<iq/>"))
-        assertEquals(InboundClassification.CONTROL_SM, classifyInbound("<r xmlns='urn:xmpp:sm:3'/>"))
+        assertEquals(InboundClassification.CONTROL, classifyInbound("<r xmlns='urn:xmpp:sm:3'/>"))
         assertEquals(InboundClassification.UNKNOWN, classifyInbound("<x/>"))
     }
 

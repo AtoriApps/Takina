@@ -3,8 +3,8 @@ package org.atoriapps.takina.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import org.atoriapps.takina.core.utils.asStringListOrNull
-import org.atoriapps.takina.core.utils.toBareJidOrNull
+import org.atoriapps.takina.core.utils.ParsingUtils.toBareJidOrNull
+import org.atoriapps.takina.core.utils.ParsingUtils.asStringListOrNull
 
 class ParsingUtilsTest {
     @Test

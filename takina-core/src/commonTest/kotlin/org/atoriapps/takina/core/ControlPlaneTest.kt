@@ -4,9 +4,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import org.atoriapps.takina.core.control.ApplyMode
-import org.atoriapps.takina.core.control.ControlPlane
-import org.atoriapps.takina.core.connection.SecurityMode
+import org.atoriapps.takina.core.controlling.ApplyMode
+import org.atoriapps.takina.core.controlling.ControlPlane
+import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.feature.FeatureKey
 import org.atoriapps.takina.core.feature.FeatureRegistry
 import org.atoriapps.takina.core.feature.TakinaFeature

@@ -7,22 +7,24 @@ import kotlin.time.Duration.Companion.ZERO
 
 enum class PipelineDirection {
     INBOUND,
-    OUTBOUND,
+    OUTBOUND
 }
+
+// CHECK：会有除此之外的类型吗？
 
 enum class InboundClassification {
     STANZA_MESSAGE,
     STANZA_PRESENCE,
     STANZA_IQ,
-    CONTROL_SM,
+    CONTROL,
     STREAM_META,
     STREAM_END,
-    UNKNOWN,
+    UNKNOWN
 }
 
 enum class OutboundClassification {
     BUSINESS,
-    CONTROL,
+    CONTROL
 }
 
 data class PipelineScopeContext(
@@ -81,15 +83,17 @@ data class NodeActivation(
     val order: Int,
 )
 
+// HACK：会不会过于简单，是否应建立`类型认领管线`
 fun classifyInbound(raw: String): InboundClassification {
     val trimmed = raw.trim()
     if (trimmed.startsWith("</stream:stream")) return InboundClassification.STREAM_END
+
     val element = XmlParser.parseStartTagOrNull(trimmed) ?: return InboundClassification.UNKNOWN
     return when (element.localName) {
         "message" -> InboundClassification.STANZA_MESSAGE
         "presence" -> InboundClassification.STANZA_PRESENCE
         "iq" -> InboundClassification.STANZA_IQ
-        "r", "a", "resume", "enabled", "resumed", "failed" -> InboundClassification.CONTROL_SM
+        "r", "a", "resume", "enabled", "resumed", "failed" -> InboundClassification.CONTROL
         "stream", "features" -> InboundClassification.STREAM_META
         else -> InboundClassification.UNKNOWN
     }

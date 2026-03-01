@@ -3,8 +3,8 @@ package org.atoriapps.takina.core
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import org.atoriapps.takina.core.connection.ConnectionState
-import org.atoriapps.takina.core.connection.ConnectionStateMachine
+import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.connections.ConnectionStateMachine
 import kotlin.test.assertEquals
 
 class ConnectionStateMachineTest {

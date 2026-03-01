@@ -2,7 +2,6 @@ package org.atoriapps.takina.tests
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -10,14 +9,14 @@ import org.junit.Assume.assumeTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import org.atoriapps.takina.core.api.createTakina
-import org.atoriapps.takina.core.connection.ConnectionState
-import org.atoriapps.takina.core.connection.SecurityMode
+import org.atoriapps.takina.core.createTakina
+import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
 import org.atoriapps.takina.core.events.RawFrameInboundEvent
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.toBareJid
-import org.atoriapps.takina.core.request.TakinaResult
+import org.atoriapps.takina.core.models.TakinaResult
 
 class XmppClientTest {
     @Test

@@ -2,8 +2,7 @@ package org.atoriapps.takina.core
 
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
-import org.atoriapps.takina.core.api.createTakina
-import org.atoriapps.takina.core.control.ApplyMode
+import org.atoriapps.takina.core.controlling.ApplyMode
 import org.atoriapps.takina.core.feature.FeatureKey
 import org.atoriapps.takina.core.feature.TakinaFeature
 import org.atoriapps.takina.core.feature.TakinaFeatureProvider

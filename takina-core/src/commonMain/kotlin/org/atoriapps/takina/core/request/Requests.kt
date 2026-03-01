@@ -1,21 +1,22 @@
 package org.atoriapps.takina.core.request
 
 import org.atoriapps.takina.core.models.BareJid
-import org.atoriapps.takina.core.models.newId
+import org.atoriapps.takina.core.models.TakinaResult
+import org.atoriapps.takina.core.utils.FunctionalUtils
 import kotlin.time.Clock
 
 data class MessageRequest(
     val from: BareJid?,
     val to: BareJid,
     val body: String,
-    val messageId: String = newId("msg"),
+    val messageId: String = FunctionalUtils.newTraceId("msg")
 )
 
 data class PresenceRequest(
     val from: BareJid?,
     val to: BareJid?,
     val show: String? = null,
-    val status: String? = null,
+    val status: String? = null
 )
 
 data class IqRequest(
@@ -23,21 +24,21 @@ data class IqRequest(
     val to: BareJid?,
     val type: String,
     val payload: String,
-    val id: String = newId("iq"),
+    val id: String = FunctionalUtils.newTraceId("iq")
 )
 
 data class MessageOutcome(
     val id: String,
-    val sentAtEpochMillis: Long = Clock.System.now().toEpochMilliseconds(),
+    val sentAtEpochMillis: Long = Clock.System.now().toEpochMilliseconds()
 )
 
 data class PresenceOutcome(
-    val sentAtEpochMillis: Long = Clock.System.now().toEpochMilliseconds(),
+    val sentAtEpochMillis: Long = Clock.System.now().toEpochMilliseconds()
 )
 
 data class IqOutcome(
     val id: String,
-    val sentAtEpochMillis: Long = Clock.System.now().toEpochMilliseconds(),
+    val sentAtEpochMillis: Long = Clock.System.now().toEpochMilliseconds()
 )
 
 interface RequestExecutor {

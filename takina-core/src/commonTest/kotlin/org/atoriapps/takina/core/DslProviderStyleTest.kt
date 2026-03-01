@@ -4,8 +4,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import org.atoriapps.takina.core.api.createTakina
-import org.atoriapps.takina.core.connection.SecurityMode
+import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.models.toBareJid
 import org.atoriapps.takina.core.request.IqRequestDsl
 import org.atoriapps.takina.core.request.MessageRequestDsl

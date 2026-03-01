@@ -1,6 +1,6 @@
 package org.atoriapps.takina.core.events
 
-import org.atoriapps.takina.core.models.newId
+import org.atoriapps.takina.core.utils.FunctionalUtils
 import kotlin.reflect.KClass
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -11,16 +11,16 @@ interface TakinaEvent {
     val type: String
 }
 
-interface TakinaEventType<T : TakinaEvent> {
-    val kClass: KClass<T>
+interface TakinaEventProvider<EVENT : TakinaEvent> {
+    val eventClass: KClass<EVENT>
 }
 
-abstract class StaticEventType<T : TakinaEvent>(
-    final override val kClass: KClass<T>,
-) : TakinaEventType<T>
+abstract class StaticEventProvider<EVENT : TakinaEvent>(
+    final override val eventClass: KClass<EVENT>,
+) : TakinaEventProvider<EVENT>
 
-open class SimpleTakinaEvent(
+open class BasicTakinaEvent(
     override val type: String,
-    override val eventId: String = newId("evt"),
+    override val eventId: String = FunctionalUtils.newTraceId("evt"),
     override val occurredAt: Instant = Clock.System.now(),
 ) : TakinaEvent

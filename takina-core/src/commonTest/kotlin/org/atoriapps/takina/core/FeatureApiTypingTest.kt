@@ -3,8 +3,7 @@ package org.atoriapps.takina.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import org.atoriapps.takina.core.api.createTakina
-import org.atoriapps.takina.core.control.ApplyMode
+import org.atoriapps.takina.core.controlling.ApplyMode
 import org.atoriapps.takina.core.feature.ApiProvidingFeature
 import org.atoriapps.takina.core.feature.FeatureApi
 import org.atoriapps.takina.core.feature.FeatureApiKey

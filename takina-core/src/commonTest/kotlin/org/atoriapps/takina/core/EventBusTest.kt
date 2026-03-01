@@ -21,7 +21,7 @@ class EventBusTest {
 
         bus.emit(TakinaStartedEvent())
         bus.emit(TakinaStartedEvent())
-        bus.removeOn(onSub)
+        onSub.remove()
         bus.emit(TakinaStartedEvent())
 
         assertEquals(2, onCount)

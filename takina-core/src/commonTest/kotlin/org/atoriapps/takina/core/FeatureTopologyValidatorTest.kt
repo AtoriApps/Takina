@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.bootstrap.FeatureTopologyValidator
-import org.atoriapps.takina.core.control.ApplyMode
+import org.atoriapps.takina.core.controlling.ApplyMode
 import org.atoriapps.takina.core.feature.FeatureKey
 import org.atoriapps.takina.core.feature.TakinaFeature
 import org.atoriapps.takina.core.models.ScopeKind

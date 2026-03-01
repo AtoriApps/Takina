@@ -41,9 +41,13 @@ sealed interface Scope {
 
 fun Scope.priority(): Int = when (this.kind) {
     ScopeKind.MESSAGE -> 5
+
     ScopeKind.CONVERSATION -> 4
+
     ScopeKind.ACCOUNT -> 3
+
     ScopeKind.GLOBAL -> 2
+
     ScopeKind.PRESET -> 1
 }
 

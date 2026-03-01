@@ -489,6 +489,18 @@ takina/* or specific handle */.request.message {
 
 同一 room/peer 在不同 owner 下是不同上下文
 
+会话句柄提供便捷API：
+
+```kotlin
+dm.message{
+    // 不需要填from/to
+    body = "114514"
+}.send() // 等效于 takina.request.message {}
+
+room.message {} // 同上
+room.join {}
+```
+
 ### 句柄边界
 
 句柄是 facade 与 context
@@ -746,14 +758,14 @@ val takina = createTakina(
     }
 
     defaults {
-      messageEncryption = EncryptionPolicy.None
+      messageEncryption { provider = EncryptionProviders.None }
     }
 
     // capability、pipeline
   }
 
   defaults {
-    messageEncryption = EncryptionPolicy.omemoAuto(fallbackBody = "Encrypted")
+    messageEncryption { provider = EncryptionProviders.omemo() }
     // 连接重试等策略
   }
 
@@ -788,12 +800,12 @@ alice.events.on<MessageEvents.Received> { event ->
   println(event.message.body)
 }
 
-room.join(nick = "alice").send()
+room.join { nick = "alice" }.send()
 
 alice.request.message {
   to = "bob@example.com".toBareJid()
   body = "hello"
-  encryption { provider = omemoProvider() }
+  encryption { provider = EncryptionProviders.omemo(fallbackMessageBody = "你的设备不支持OMEMO加密，看不了消息") }
 }.send()
 
 // runtime 状态流支持 collect 与 .value 快照

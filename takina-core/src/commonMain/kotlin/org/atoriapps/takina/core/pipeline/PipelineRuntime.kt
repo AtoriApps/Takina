@@ -4,21 +4,23 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.TimeSource
 import org.atoriapps.takina.core.controlling.ControlPlane
-import org.atoriapps.takina.core.feature.FeatureKey
+import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
+
+// TODO、CHECK：管线about的前后依赖型排序好像没做，另外这个API（about）是否要更名？另外这里面是不是也有Key？再看看
 
 class PipelineRuntime(
     private val controlPlane: ControlPlane,
 ) {
     private data class InboundRegistration(
         val node: InboundNode,
-        val featureKey: FeatureKey?,
+        val featureProvider: TakinaFeatureProvider<*>?,
         val controlOnly: Boolean,
     )
 
     private data class OutboundRegistration(
         val node: OutboundNode,
-        val featureKey: FeatureKey?,
+        val featureProvider: TakinaFeatureProvider<*>?,
         val controlOnly: Boolean,
         val userCustom: Boolean,
     )
@@ -36,21 +38,21 @@ class PipelineRuntime(
 
     fun registerInboundNode(
         node: InboundNode,
-        featureKey: FeatureKey? = null,
+        featureProvider: TakinaFeatureProvider<*>? = null,
         controlOnly: Boolean = false,
     ) {
-        inboundNodes += InboundRegistration(node = node, featureKey = featureKey, controlOnly = controlOnly)
+        inboundNodes += InboundRegistration(node = node, featureProvider = featureProvider, controlOnly = controlOnly)
     }
 
     fun registerOutboundNode(
         node: OutboundNode,
-        featureKey: FeatureKey? = null,
+        featureProvider: TakinaFeatureProvider<*>? = null,
         controlOnly: Boolean = false,
         userCustom: Boolean = true,
     ) {
         outboundNodes += OutboundRegistration(
             node = node,
-            featureKey = featureKey,
+            featureProvider = featureProvider,
             controlOnly = controlOnly,
             userCustom = userCustom,
         )
@@ -65,7 +67,7 @@ class PipelineRuntime(
 
         val sorted = controlPlane.sortNodesWithVisibilityConflict(
             nodeKeys = candidates.map { it.node.key },
-            featureKeyOfNode = { key -> candidates.first { it.node.key == key }.featureKey },
+            featureProviderOfNode = { key -> candidates.first { it.node.key == key }.featureProvider },
             scope = scope,
         ).filter { it.enabled }
 
@@ -102,7 +104,7 @@ class PipelineRuntime(
 
         val sorted = controlPlane.sortNodesWithVisibilityConflict(
             nodeKeys = candidates.map { it.node.key },
-            featureKeyOfNode = { key -> candidates.first { it.node.key == key }.featureKey },
+            featureProviderOfNode = { key -> candidates.first { it.node.key == key }.featureProvider },
             scope = scope,
         ).filter { it.enabled }
 
@@ -138,12 +140,12 @@ class PipelineRuntime(
             PipelineDirection.OUTBOUND -> outboundNodes.map { it.node.key }
         }
         val registrationsFeatureMap = when (direction) {
-            PipelineDirection.INBOUND -> inboundNodes.associate { it.node.key to it.featureKey }
-            PipelineDirection.OUTBOUND -> outboundNodes.associate { it.node.key to it.featureKey }
+            PipelineDirection.INBOUND -> inboundNodes.associate { it.node.key to it.featureProvider }
+            PipelineDirection.OUTBOUND -> outboundNodes.associate { it.node.key to it.featureProvider }
         }
         val sorted = controlPlane.sortNodesWithVisibilityConflict(
             nodeKeys = nodeKeys,
-            featureKeyOfNode = { registrationsFeatureMap[it] },
+            featureProviderOfNode = { registrationsFeatureMap[it] },
             scope = scope,
         )
         return PipelineDescription(

@@ -15,8 +15,8 @@ import org.atoriapps.takina.core.events.ConfigApplyDeferredEvent
 import org.atoriapps.takina.core.events.ConfigRejectedEvent
 import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
 import org.atoriapps.takina.core.events.RawFrameInboundEvent
-import org.atoriapps.takina.core.feature.TakinaFeature
-import org.atoriapps.takina.core.feature.TakinaFeatureProvider
+import org.atoriapps.takina.core.features.TakinaFeature
+import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.ScopeKind
 import org.atoriapps.takina.core.models.toBareJid
@@ -29,13 +29,12 @@ class CoreSemanticsTest {
     private val bob = "bob@example.com".toBareJid()
 
     private class DummyFeature : TakinaFeature {
-        override val key = DummyFeatureProvider.key
         override val supportedScopes: Set<ScopeKind> = setOf(ScopeKind.GLOBAL, ScopeKind.MESSAGE)
         override val applyMode: ApplyMode = ApplyMode.NEXT_CONNECTION
     }
 
     private object DummyFeatureProvider : TakinaFeatureProvider<DummyFeature> {
-        override val key = org.atoriapps.takina.core.feature.FeatureKey("dummy")
+        override val id: String = "dummy"
         override val featureType = DummyFeature::class
         override fun create(): DummyFeature = DummyFeature()
     }
@@ -71,7 +70,6 @@ class CoreSemanticsTest {
     }
 
     private class MarkerOutboundFeature : TakinaFeature {
-        override val key = MarkerOutboundFeatureProvider.key
         override val supportedScopes: Set<ScopeKind> = setOf(ScopeKind.GLOBAL, ScopeKind.ACCOUNT, ScopeKind.CONVERSATION, ScopeKind.MESSAGE)
         override val applyMode: ApplyMode = ApplyMode.NEXT_ITEM
         override fun outboundNodes(): List<OutboundNode> = listOf(object : OutboundNode {
@@ -81,7 +79,7 @@ class CoreSemanticsTest {
     }
 
     private object MarkerOutboundFeatureProvider : TakinaFeatureProvider<MarkerOutboundFeature> {
-        override val key = org.atoriapps.takina.core.feature.FeatureKey("marker-outbound")
+        override val id: String = "marker-outbound"
         override val featureType = MarkerOutboundFeature::class
         override fun create(): MarkerOutboundFeature = MarkerOutboundFeature()
     }

@@ -1,5 +1,7 @@
 package org.atoriapps.takina.core.error
 
+// TODO、CHECK：何意味这个错误系统，感觉也怪怪的
+
 enum class ErrorDomain {
     TRANSPORT,
     TLS,

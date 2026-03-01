@@ -3,23 +3,21 @@ package org.atoriapps.takina.core
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import org.atoriapps.takina.core.controlling.ApplyMode
-import org.atoriapps.takina.core.feature.FeatureKey
-import org.atoriapps.takina.core.feature.TakinaFeature
-import org.atoriapps.takina.core.feature.TakinaFeatureProvider
+import org.atoriapps.takina.core.features.TakinaFeature
+import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.ScopeKind
 import org.atoriapps.takina.core.models.toBareJid
 import kotlin.test.assertEquals
 
 class FeaturesDslBehaviorTest {
     private class MutableFeature : TakinaFeature {
-        override val key: FeatureKey = FeatureKey("mutable")
         override val supportedScopes: Set<ScopeKind> = setOf(ScopeKind.GLOBAL)
         override val applyMode: ApplyMode = ApplyMode.IMMEDIATE
 
         var configured: Boolean = false
 
         companion object  : TakinaFeatureProvider<MutableFeature> {
-            override val key: FeatureKey = FeatureKey("mutable")
+            override val id: String = "mutable"
             override val featureType = MutableFeature::class
             var created: MutableFeature? = null
             override fun create(): MutableFeature = MutableFeature().also { created = it }

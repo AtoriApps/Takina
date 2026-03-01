@@ -50,6 +50,8 @@ interface RequestExecutor {
 @DslMarker
 annotation class RequestDsl
 
+// TODO、CHECK：这几个请求类型的Payload，要不要也变成XmlElement，而不是str？🤔
+
 @RequestDsl
 class MessageRequestDsl {
     private var fromProvider: (() -> BareJid?)? = null
@@ -106,12 +108,14 @@ class PresenceRequestDsl {
             fromProvider = { value }
         }
 
+    // CHECK：这玩意还能to吗
     var to: BareJid?
         get() = toProvider?.invoke()
         set(value) {
             toProvider = { value }
         }
 
+    // CHECK：这又是啥？？？
     var show: String?
         get() = showProvider?.invoke()
         set(value) {

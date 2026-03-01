@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.controlling.ControlPlane
-import org.atoriapps.takina.core.feature.FeatureRegistry
+import org.atoriapps.takina.core.features.FeatureRegistry
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.pipeline.InboundClassification
 import org.atoriapps.takina.core.pipeline.InboundFrame

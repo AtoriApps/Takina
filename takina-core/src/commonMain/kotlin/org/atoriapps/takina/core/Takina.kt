@@ -41,14 +41,14 @@ import org.atoriapps.takina.core.events.TakinaShutdownCompletedEvent
 import org.atoriapps.takina.core.events.TakinaStartedEvent
 import org.atoriapps.takina.core.events.UnexpectedDisconnectedEvent
 import org.atoriapps.takina.core.events.UnknownFrameInboundEvent
-import org.atoriapps.takina.core.feature.ApiProvidingFeature
-import org.atoriapps.takina.core.feature.ConfigPreset
-import org.atoriapps.takina.core.feature.FeatureApi
-import org.atoriapps.takina.core.feature.FeatureApiKey
-import org.atoriapps.takina.core.feature.FeatureKey
-import org.atoriapps.takina.core.feature.FeaturePreset
-import org.atoriapps.takina.core.feature.FeatureRegistry
-import org.atoriapps.takina.core.feature.TakinaFeature
+import org.atoriapps.takina.core.features.ApiProvidingFeature
+import org.atoriapps.takina.core.features.ConfigPreset
+import org.atoriapps.takina.core.features.FeatureApi
+import org.atoriapps.takina.core.features.FeaturePreset
+import org.atoriapps.takina.core.features.FeatureRegistry
+import org.atoriapps.takina.core.features.InstalledFeature
+import org.atoriapps.takina.core.features.TakinaFeature
+import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.pipeline.InboundClassification
@@ -95,8 +95,8 @@ interface Takina {
     fun removeAccount(accountHandle: AccountHandle)= removeAccount(accountHandle.owner)
     fun getAccountHandleFor(jid: BareJid): AccountHandle
 
-    fun <API : FeatureApi> api(key: FeatureApiKey<API>): API
-    fun <API : FeatureApi> apiOrNull(key: FeatureApiKey<API>): API?
+    fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
+    fun <API : FeatureApi, FEATURE> apiOrNull(provider: TakinaFeatureProvider<FEATURE>): API? where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
 
     suspend fun connect(jid: BareJid)
     suspend fun connect(accountHandle: AccountHandle) = connect(accountHandle.owner)
@@ -115,9 +115,9 @@ class AccountHandle internal constructor(
     val events: TakinaEventBus get() = takina.events
 
     fun capability(init: CapabilityDsl.() -> Unit) {
-        CapabilityDsl { key, scope, enabled ->
+        CapabilityDsl { provider, scope, enabled ->
             val resolvedScope = if (scope == Scope.Global) Scope.Account(owner) else scope
-            takina.applyCapability(key, resolvedScope, enabled)
+            takina.applyCapability(provider, resolvedScope, enabled)
         }.apply(init)
     }
 
@@ -130,8 +130,8 @@ class AccountHandle internal constructor(
     suspend fun connect() = takina.connect(owner)
     suspend fun disconnect() = takina.disconnect(owner)
 
-    fun <API : FeatureApi> api(key: FeatureApiKey<API>): API = takina.api(key)
-    fun <API : FeatureApi> apiOrNull(key: FeatureApiKey<API>): API? = takina.apiOrNull(key)
+    fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> = takina.api(provider)
+    fun <API : FeatureApi, FEATURE> apiOrNull(provider: TakinaFeatureProvider<FEATURE>): API? where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> = takina.apiOrNull(provider)
 
     fun getDirectChatHandleFor(peer: BareJid): DirectChatHandle = DirectChatHandle(this, peer)
     fun getMucHandleFor(room: BareJid): MucHandle = MucHandle(this, room)
@@ -160,6 +160,7 @@ class MucHandle internal constructor(
     }
 }
 
+// TODO、CHECK：内部要不要拆，会不会太重？
 internal class CoreTakina(
     private val featurePreset: FeaturePreset,
     private val configPreset: ConfigPreset,
@@ -167,13 +168,13 @@ internal class CoreTakina(
 ) : Takina, RequestExecutor {
     override val events: TakinaEventBus = TakinaEventBus()
 
-    private val installedFeatures: List<TakinaFeature> = resolvePresetFeatures(featurePreset) + bootstrapConfiguration.features
+    private val installedFeatures: List<InstalledFeature> = resolvePresetFeatures(featurePreset) + bootstrapConfiguration.features
     private val featureRegistry: FeatureRegistry
     private val controlPlane: ControlPlane
     private val pipelineRuntime: PipelineRuntime
     override val runtime: TakinaRuntime
     override val request: TakinaRequestApi
-    private val featureApisByKey = mutableMapOf<FeatureKey, FeatureApi>()
+    private val featureApisByProvider = mutableMapOf<TakinaFeatureProvider<*>, FeatureApi>()
 
     private val accounts = linkedMapOf<BareJid, AccountDefinition>()
     private val stateMachines = linkedMapOf<BareJid, ConnectionStateMachine>()
@@ -183,6 +184,7 @@ internal class CoreTakina(
     private var shutdown = false
 
     init {
+        applyFeatureConfigureDrafts(installedFeatures, bootstrapConfiguration.featureConfigureDrafts)
         FeatureTopologyValidator.validateOrThrow(installedFeatures)
 
         featureRegistry = FeatureRegistry(installedFeatures)
@@ -191,22 +193,23 @@ internal class CoreTakina(
         runtime = TakinaRuntime(controlPlane, pipelineRuntime)
         request = TakinaRequestApi(this)
 
-        installedFeatures.forEach { feature ->
-            feature.inboundNodes().forEach { pipelineRuntime.registerInboundNode(it, feature.key) }
-            feature.outboundNodes().forEach { pipelineRuntime.registerOutboundNode(it, feature.key) }
-            if (feature is ApiProvidingFeature<*>) featureApisByKey[feature.apiKey.featureKey] = feature.api()
+        installedFeatures.forEach { installed ->
+            val feature = installed.feature
+            feature.inboundNodes().forEach { pipelineRuntime.registerInboundNode(it, installed.provider) }
+            feature.outboundNodes().forEach { pipelineRuntime.registerOutboundNode(it, installed.provider) }
+            if (feature is ApiProvidingFeature<*>) featureApisByProvider[installed.provider] = feature.api()
         }
 
         applyConfigPreset(configPreset)
         bootstrapConfiguration.configDrafts.forEach { applyConfig(it.path, it.value, it.scope, null) }
-        bootstrapConfiguration.capabilityDrafts.forEach { applyCapability(it.featureKey, it.scope, it.enabled) }
+        bootstrapConfiguration.capabilityDrafts.forEach { applyCapability(it.featureProvider, it.scope, it.enabled) }
         bootstrapConfiguration.nodePolicyDrafts.forEach {
             it.enabled?.let { enabled -> controlPlane.setNodeEnabled(it.nodeKey, it.scope, enabled) }
             it.order?.let { order -> controlPlane.setNodeOrder(it.nodeKey, it.scope, order) }
         }
         bootstrapConfiguration.accounts.values.forEach { installAccount(it, emitEvent = true) }
 
-        runBlocking { installedFeatures.forEach { feature -> feature.onInstall(this@CoreTakina) } }
+        runBlocking { installedFeatures.forEach { installed -> installed.feature.onInstall(this@CoreTakina) } }
 
         started = true
         events.emit(TakinaStartedEvent())
@@ -214,7 +217,7 @@ internal class CoreTakina(
 
     override fun capability(init: CapabilityDsl.() -> Unit) {
         ensureStarted()
-        CapabilityDsl { key, scope, enabled -> applyCapability(key, scope, enabled) }.apply(init)
+        CapabilityDsl { provider, scope, enabled -> applyCapability(provider, scope, enabled) }.apply(init)
     }
 
     override fun config(init: ConfigDsl.() -> Unit) {
@@ -240,17 +243,18 @@ internal class CoreTakina(
         events.emit(AccountRemovedEvent(jid))
     }
 
+    // TODO：HANDLE要不要换换名字？
     override fun getAccountHandleFor(jid: BareJid): AccountHandle {
         ensureStarted()
         require(accounts.containsKey(jid)) { "Account not found: $jid" }
         return AccountHandle(this, jid)
     }
 
-    override fun <API : FeatureApi> api(key: FeatureApiKey<API>): API = requireNotNull(apiOrNull(key)) { "Feature API not available: ${key.featureKey}" }
+    override fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> =
+        requireNotNull(apiOrNull(provider)) { "Feature API not available: ${provider.id}" }
 
-    override fun <API : FeatureApi> apiOrNull(key: FeatureApiKey<API>): API? {
-        val raw = featureApisByKey[key.featureKey] ?: return null
-        if (!key.apiType.isInstance(raw)) return null
+    override fun <API : FeatureApi, FEATURE> apiOrNull(provider: TakinaFeatureProvider<FEATURE>): API? where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> {
+        val raw = featureApisByProvider[provider] ?: return null
         @Suppress("UNCHECKED_CAST")
         return raw as API
     }
@@ -315,7 +319,7 @@ internal class CoreTakina(
     override suspend fun shutdown() {
         if (shutdown) return
         disconnectAll()
-        installedFeatures.forEach { feature -> feature.onShutdown(this@CoreTakina) }
+        installedFeatures.forEach { installed -> installed.feature.onShutdown(this@CoreTakina) }
         transports.clear()
         shutdown = true
         events.emit(TakinaShutdownCompletedEvent())
@@ -403,9 +407,9 @@ internal class CoreTakina(
         }
     }
 
-    internal fun applyCapability(featureKey: FeatureKey, scope: Scope, enabled: Boolean) {
-        controlPlane.setFeatureEnabled(featureKey, scope, enabled)
-        events.emit(FeatureStateChangedEvent(feature = featureKey.value, enabled = enabled))
+    internal fun applyCapability(featureProvider: TakinaFeatureProvider<*>, scope: Scope, enabled: Boolean) {
+        controlPlane.setFeatureEnabled(featureProvider, scope, enabled)
+        events.emit(FeatureStateChangedEvent(feature = featureProvider.id, enabled = enabled))
     }
 
     internal fun applyConfig(path: String, value: Any?, scope: Scope, accountOwner: BareJid?) {
@@ -544,8 +548,8 @@ internal class CoreTakina(
         }
         runtime.setConnectionState(owner, next)
         runBlocking {
-            installedFeatures.forEach { feature ->
-                feature.lifecycleHooks().forEach { hook ->
+            installedFeatures.forEach { installed ->
+                installed.feature.lifecycleHooks().forEach { hook ->
                     hook.onConnectionStateChanged(owner, result.from, result.to)
                 }
             }
@@ -588,7 +592,20 @@ internal class CoreTakina(
         }
     }
 
-    private fun resolvePresetFeatures(featurePreset: FeaturePreset): List<TakinaFeature> = when (featurePreset) {
+    private fun applyFeatureConfigureDrafts(
+        installed: List<InstalledFeature>,
+        drafts: List<FeatureConfigureDraft>,
+    ) {
+        if (drafts.isEmpty()) return
+        val installedByProvider = installed.associateBy { it.provider }
+        drafts.forEach { draft ->
+            val target = installedByProvider[draft.featureProvider]?.feature
+                ?: throw IllegalArgumentException("Feature ${draft.featureProvider.id} is not installed, cannot configure")
+            draft.apply(target)
+        }
+    }
+
+    private fun resolvePresetFeatures(featurePreset: FeaturePreset): List<InstalledFeature> = when (featurePreset) {
         FeaturePreset.Minimal -> emptyList()
         FeaturePreset.Recommended -> emptyList()
         FeaturePreset.Full -> emptyList()

@@ -4,6 +4,7 @@ import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.toBareJid
 import kotlin.random.Random
 
+// TODO、CHECK：下面这个工具类真的有用吗？？另外还有什么该是工具类的没做？
 object ParsingUtils {
     fun String.toBareJidOrNull(): BareJid? {
         val bare = substringBefore('/')

@@ -35,6 +35,8 @@ data class TransitionResult(
     val errorCode: String? = null,
 )
 
+// TODO、CHECK：检查一下。另外就是具体XmppTp，这个会不会又存在什么耦合或者非聚合
+
 class ConnectionStateMachine(
     initialState: ConnectionState = ConnectionState.IDLE,
 ) {

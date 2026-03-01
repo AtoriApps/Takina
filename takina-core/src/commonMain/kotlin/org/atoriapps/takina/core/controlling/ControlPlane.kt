@@ -1,8 +1,8 @@
 package org.atoriapps.takina.core.controlling
 
 import org.atoriapps.takina.core.connections.SecurityMode
-import org.atoriapps.takina.core.feature.FeatureKey
-import org.atoriapps.takina.core.feature.FeatureRegistry
+import org.atoriapps.takina.core.features.FeatureRegistry
+import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.fallbackChain
 
@@ -17,7 +17,7 @@ data class ExplainResult(
 )
 
 data class FeatureActivation(
-    val key: FeatureKey,
+    val featureId: String,
     val enabled: Boolean,
     val explanation: ExplainResult,
 )
@@ -33,7 +33,7 @@ class ControlPlane(
     private val featureRegistry: FeatureRegistry,
     private val configMetaCatalog: Map<String, ConfigMeta> = CoreConfigMetaCatalog.all,
 ) {
-    private val featureToggles = mutableMapOf<FeatureKey, MutableMap<Scope, Boolean>>()
+    private val featureToggles = mutableMapOf<TakinaFeatureProvider<*>, MutableMap<Scope, Boolean>>()
     private val nodeToggles = mutableMapOf<String, MutableMap<Scope, Boolean>>()
     private val nodeOrders = mutableMapOf<String, MutableMap<Scope, Int>>()
 
@@ -42,11 +42,11 @@ class ControlPlane(
     private val nextConnectionConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
 
     fun setFeatureEnabled(
-        featureKey: FeatureKey,
+        provider: TakinaFeatureProvider<*>,
         scope: Scope,
         enabled: Boolean,
     ) {
-        featureToggles.getOrPut(featureKey) { linkedMapOf() }[scope] = enabled
+        featureToggles.getOrPut(provider) { linkedMapOf() }[scope] = enabled
     }
 
     fun setNodeEnabled(
@@ -125,28 +125,40 @@ class ControlPlane(
     }
 
     fun describeActiveFeatures(scope: Scope): List<FeatureActivation> = featureRegistry.all().map { feature ->
+        val explained = isFeatureEnabled(feature.provider, scope)
         FeatureActivation(
-            key = feature.key,
-            enabled = isFeatureEnabled(feature.key, scope).enabled,
-            explanation = isFeatureEnabled(feature.key, scope),
+            featureId = feature.provider.id,
+            enabled = explained.enabled,
+            explanation = explained,
         )
     }
 
-    fun explainFeature(featureKey: FeatureKey, scope: Scope): ExplainResult = isFeatureEnabled(featureKey, scope)
+    fun explainFeature(provider: TakinaFeatureProvider<*>, scope: Scope): ExplainResult = isFeatureEnabled(provider, scope)
+
+    fun explainFeature(featureId: String, scope: Scope): ExplainResult {
+        val provider = featureRegistry.installedById(featureId)?.provider ?: return ExplainResult(
+            target = featureId,
+            scope = scope,
+            installed = false,
+            enabled = false,
+            reasonChain = listOf("feature-not-installed"),
+        )
+        return isFeatureEnabled(provider, scope)
+    }
 
     fun explainNode(
         nodeKey: String,
-        featureKey: FeatureKey?,
+        featureProvider: TakinaFeatureProvider<*>?,
         scope: Scope,
     ): ExplainResult {
         val reason = mutableListOf<String>()
         var installed = true
 
-        val featureResult = featureKey?.let { isFeatureEnabled(it, scope) }
+        val featureResult = featureProvider?.let { isFeatureEnabled(it, scope) }
         if (featureResult != null) {
             installed = featureResult.installed
             if (!featureResult.enabled) {
-                reason += "feature-disabled:${featureKey.value}"
+                reason += "feature-disabled:${featureProvider.id}"
                 return ExplainResult(
                     target = nodeKey,
                     scope = scope,
@@ -193,11 +205,11 @@ class ControlPlane(
 
     fun sortNodesWithVisibilityConflict(
         nodeKeys: List<String>,
-        featureKeyOfNode: (String) -> FeatureKey?,
+        featureProviderOfNode: (String) -> TakinaFeatureProvider<*>?,
         scope: Scope,
     ): List<NodeActivationState> {
         val states = nodeKeys.map { node ->
-            val explain = explainNode(node, featureKeyOfNode(node), scope)
+            val explain = explainNode(node, featureProviderOfNode(node), scope)
             NodeActivationState(
                 nodeKey = node,
                 enabled = explain.enabled,
@@ -216,9 +228,9 @@ class ControlPlane(
         }
     }
 
-    private fun isFeatureEnabled(featureKey: FeatureKey, scope: Scope): ExplainResult {
-        val feature = featureRegistry.get(featureKey) ?: return ExplainResult(
-            target = featureKey.value,
+    private fun isFeatureEnabled(provider: TakinaFeatureProvider<*>, scope: Scope): ExplainResult {
+        val feature = featureRegistry.get(provider) ?: return ExplainResult(
+            target = provider.id,
             scope = scope,
             installed = false,
             enabled = false,
@@ -228,9 +240,9 @@ class ControlPlane(
         val chain = scope.fallbackChain()
         for (s in chain) {
             if (s.kind !in feature.supportedScopes) continue
-            val value = featureToggles[featureKey]?.get(s)
+            val value = featureToggles[provider]?.get(s)
             if (value != null) return ExplainResult(
-                target = featureKey.value,
+                target = provider.id,
                 scope = scope,
                 installed = true,
                 enabled = value,
@@ -241,7 +253,7 @@ class ControlPlane(
 
         if (chain.none { it.kind in feature.supportedScopes }) {
             return ExplainResult(
-                target = featureKey.value,
+                target = provider.id,
                 scope = scope,
                 installed = true,
                 enabled = false,
@@ -251,7 +263,7 @@ class ControlPlane(
         }
 
         return ExplainResult(
-            target = featureKey.value,
+            target = provider.id,
             scope = scope,
             installed = true,
             enabled = true,

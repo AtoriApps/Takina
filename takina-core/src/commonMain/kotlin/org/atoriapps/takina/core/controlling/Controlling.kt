@@ -21,6 +21,8 @@ data class ConfigChangeResult(
     val rejectedReason: String? = null,
 )
 
+// TODO、CHECK：下面是啥，预定义的配置项吗？我的想法是仅保留Core的配置项，其它都由feat本身提供
+
 object CoreConfigMetaCatalog {
     val all: Map<String, ConfigMeta> = listOf(
         ConfigMeta("connection.host", ApplyMode.NEXT_CONNECTION, mutable = true),

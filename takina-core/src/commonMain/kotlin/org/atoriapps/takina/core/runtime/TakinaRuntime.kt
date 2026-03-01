@@ -19,6 +19,7 @@ data class RuntimeHealth(
     val failedAccounts: Int = 0,
 )
 
+// TODO：还有什么可以放进Rt，这里面已有的有什么用？
 class TakinaRuntime(
     private val controlPlane: ControlPlane,
     private val pipelineRuntime: PipelineRuntime,
@@ -45,8 +46,11 @@ class TakinaRuntime(
     fun describeActivePipeline(direction: PipelineDirection, scope: Scope): PipelineDescription =
         pipelineRuntime.describeActivePipeline(direction, scope)
 
-    fun explainWhyEnabled(target: String, scope: Scope) = if (target.startsWith("feature:")) controlPlane.explainFeature(org.atoriapps.takina.core.feature.FeatureKey(target.removePrefix("feature:")), scope)
-    else controlPlane.explainNode(target.removePrefix("node:"), null, scope)
+    fun explainWhyEnabled(target: String, scope: Scope) = if (target.startsWith("feature:")) {
+        controlPlane.explainFeature(target.removePrefix("feature:"), scope)
+    } else {
+        controlPlane.explainNode(target.removePrefix("node:"), null, scope)
+    }
 
     fun nodeMetrics(): List<NodeMetrics> = pipelineRuntime.metricsSnapshot()
 

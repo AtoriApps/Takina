@@ -1,9 +1,9 @@
 package org.atoriapps.takina.core
 
 import org.atoriapps.takina.core.connections.SecurityMode
-import org.atoriapps.takina.core.feature.FeatureKey
-import org.atoriapps.takina.core.feature.TakinaFeature
-import org.atoriapps.takina.core.feature.TakinaFeatureProvider
+import org.atoriapps.takina.core.features.InstalledFeature
+import org.atoriapps.takina.core.features.TakinaFeature
+import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
 
@@ -37,9 +37,14 @@ internal data class NodePolicyDraft(
 )
 
 internal data class CapabilityDraft(
-    val featureKey: FeatureKey,
+    val featureProvider: TakinaFeatureProvider<*>,
     val scope: Scope,
     val enabled: Boolean,
+)
+
+internal data class FeatureConfigureDraft(
+    val featureProvider: TakinaFeatureProvider<*>,
+    val apply: (TakinaFeature) -> Unit,
 )
 
 internal data class ConfigDraft(
@@ -51,7 +56,8 @@ internal data class ConfigDraft(
 @TakinaDsl
 class TakinaConfiguration internal constructor() {
     internal val accounts = linkedMapOf<BareJid, AccountDefinition>()
-    internal val features = mutableListOf<TakinaFeature>()
+    internal val features = mutableListOf<InstalledFeature>()
+    internal val featureConfigureDrafts = mutableListOf<FeatureConfigureDraft>()
     internal val capabilityDrafts = mutableListOf<CapabilityDraft>()
     internal val configDrafts = mutableListOf<ConfigDraft>()
     internal val nodePolicyDrafts = mutableListOf<NodePolicyDraft>()
@@ -62,13 +68,13 @@ class TakinaConfiguration internal constructor() {
     }
 
     fun features(init: FeaturesDsl.() -> Unit) {
-        FeaturesDsl(features).apply(init)
+        FeaturesDsl(features, featureConfigureDrafts).apply(init)
     }
 
     // CHECK：好像不对，能力不是按作用域控制功能的开关吗
     fun capability(init: CapabilityDsl.() -> Unit) {
-        CapabilityDsl { key, scope, enabled ->
-            capabilityDrafts += CapabilityDraft(key, scope, enabled)
+        CapabilityDsl { provider, scope, enabled ->
+            capabilityDrafts += CapabilityDraft(provider, scope, enabled)
         }.apply(init)
     }
 
@@ -242,17 +248,22 @@ class ConnectionDsl {
 
 @TakinaDsl
 class FeaturesDsl internal constructor(
-    private val sink: MutableList<TakinaFeature>,
+    private val sink: MutableList<InstalledFeature>,
+    private val configureSink: MutableList<FeatureConfigureDraft>,
 ) {
     fun <FEATURE : TakinaFeature> install(provider: TakinaFeatureProvider<FEATURE>) {
-        if (sink.none { it.key == provider.key }) sink += provider.create()
+        if (sink.none { it.provider.id == provider.id }) sink += InstalledFeature(provider = provider, feature = provider.create())
     }
 
     fun <FEATURE : TakinaFeature> configure(provider: TakinaFeatureProvider<FEATURE>, init: FEATURE.() -> Unit) {
-        val installed = sink.firstOrNull { it.key == provider.key } ?: throw IllegalArgumentException("Feature ${provider.key} is not installed, cannot configure")
-        require(provider.featureType.isInstance(installed)) { "Installed feature type mismatch for ${provider.key}" }
-        @Suppress("UNCHECKED_CAST")
-        (installed as FEATURE).init()
+        configureSink += FeatureConfigureDraft(
+            featureProvider = provider,
+            apply = { installed ->
+                require(provider.featureType.isInstance(installed)) { "Installed feature type mismatch for ${provider.id}" }
+                @Suppress("UNCHECKED_CAST")
+                (installed as FEATURE).init()
+            },
+        )
     }
 
     fun <FEATURE : TakinaFeature> installAndConfigure(provider: TakinaFeatureProvider<FEATURE>, init: FEATURE.() -> Unit) {
@@ -263,12 +274,10 @@ class FeaturesDsl internal constructor(
 
 @TakinaDsl
 class CapabilityDsl internal constructor(
-    private val sink: (FeatureKey, Scope, Boolean) -> Unit,
+    private val sink: (TakinaFeatureProvider<*>, Scope, Boolean) -> Unit,
 ) {
-    fun enable(featureKey: FeatureKey, scope: Scope = Scope.Global) = sink(featureKey, scope, true)
-    fun disable(featureKey: FeatureKey, scope: Scope = Scope.Global) = sink(featureKey, scope, false)
-    fun enable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = enable(provider.key, scope)
-    fun disable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = disable(provider.key, scope)
+    fun enable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = sink(provider, scope, true)
+    fun disable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = sink(provider, scope, false)
 }
 
 @TakinaDsl

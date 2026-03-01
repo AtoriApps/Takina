@@ -7,26 +7,28 @@ import kotlin.test.assertTrue
 import org.atoriapps.takina.core.controlling.ApplyMode
 import org.atoriapps.takina.core.controlling.ControlPlane
 import org.atoriapps.takina.core.connections.SecurityMode
-import org.atoriapps.takina.core.feature.FeatureKey
-import org.atoriapps.takina.core.feature.FeatureRegistry
-import org.atoriapps.takina.core.feature.TakinaFeature
+import org.atoriapps.takina.core.features.FeatureRegistry
+import org.atoriapps.takina.core.features.InstalledFeature
+import org.atoriapps.takina.core.features.TakinaFeature
+import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.ScopeKind
 import org.atoriapps.takina.core.models.toBareJid
 
 class ControlPlaneTest {
-    private val omemo = feature("omemo")
-    private val registry = FeatureRegistry(listOf(omemo))
+    private val omemoProvider = provider("omemo")
+    private val omemo = feature()
+    private val registry = FeatureRegistry(listOf(InstalledFeature(omemoProvider, omemo)))
     private val controlPlane = ControlPlane(registry)
     private val owner = "alice@example.com".toBareJid()
     private val peer = "bob@example.com".toBareJid()
 
     @Test
     fun `scope priority prefers message over global`() {
-        controlPlane.setFeatureEnabled(omemo.key, Scope.Global, true)
-        controlPlane.setFeatureEnabled(omemo.key, Scope.Message(owner, peer, "m1"), false)
+        controlPlane.setFeatureEnabled(omemoProvider, Scope.Global, true)
+        controlPlane.setFeatureEnabled(omemoProvider, Scope.Message(owner, peer, "m1"), false)
 
-        val result = controlPlane.explainFeature(omemo.key, Scope.Message(owner, peer, "m1"))
+        val result = controlPlane.explainFeature(omemoProvider, Scope.Message(owner, peer, "m1"))
         assertFalse(result.enabled)
         assertTrue(result.reasonChain.first().contains("MESSAGE"))
     }
@@ -40,7 +42,7 @@ class ControlPlaneTest {
 
         val sorted = controlPlane.sortNodesWithVisibilityConflict(
             nodeKeys = listOf("decrypt", "normalize"),
-            featureKeyOfNode = { null },
+            featureProviderOfNode = { null },
             scope = Scope.Global,
         )
         assertEquals(2, sorted.size)
@@ -80,8 +82,13 @@ class ControlPlaneTest {
         assertEquals(2_000L, controlPlane.currentConfig("reconnect.delay", Scope.Global))
     }
 
-    private fun feature(key: String): TakinaFeature = object : TakinaFeature {
-        override val key: FeatureKey = FeatureKey(key)
+    private fun provider(featureId: String): TakinaFeatureProvider<TakinaFeature> = object : TakinaFeatureProvider<TakinaFeature> {
+        override val id: String = featureId
+        override val featureType = TakinaFeature::class
+        override fun create(): TakinaFeature = error("not used in tests")
+    }
+
+    private fun feature(): TakinaFeature = object : TakinaFeature {
         override val supportedScopes: Set<ScopeKind> = setOf(ScopeKind.GLOBAL, ScopeKind.ACCOUNT, ScopeKind.CONVERSATION, ScopeKind.MESSAGE)
         override val applyMode: ApplyMode = ApplyMode.IMMEDIATE
     }

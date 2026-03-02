@@ -71,8 +71,7 @@ API简明实用，库开箱即用
 - Feature: 统一扩展单元
 - Capability: Feature 的能力开关语义
 - Node: Pipeline 执行节点
-- Control Plane: 能力与开关求值层。TODO：或改名UniManagement？讨论讨论
-- Execution Plane: 节点执行层
+- Unified Policy: 能力、开关、节点的全局具体求值层
 - Scope: 配置作用域
 - Owner: 会话户主账号
 - Business Outbound: 业务出站消息
@@ -85,7 +84,7 @@ API简明实用，库开箱即用
 ### 创建入口与预设
 
 `preset` 放在构造参数层
-DSL 内不再提供 `installPreset` 同义入口
+DSL 内不提供 `installPreset` 同义入口
 
 建议签名
 
@@ -170,9 +169,7 @@ data class FeatureTopologyError(
 )
 ```
 
-### 两层控制面
-
-先 Control Plane 再 Execution Plane
+### 管线节点这一块
 
 优先级固定为
 

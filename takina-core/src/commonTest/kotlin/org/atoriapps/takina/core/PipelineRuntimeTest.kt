@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.atoriapps.takina.core.controlling.ControlPlane
+import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.features.FeatureRegistry
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.pipeline.InboundClassification
@@ -30,7 +30,7 @@ class PipelineRuntimeTest {
 
     @Test
     fun `tracks node metrics for drop bypass and fail`() = runTest {
-        val control = ControlPlane(FeatureRegistry(emptyList()))
+        val control = UnifiedPolicy(FeatureRegistry(emptyList()))
         val runtime = PipelineRuntime(control)
 
         runtime.registerInboundNode(object : InboundNode {
@@ -65,7 +65,7 @@ class PipelineRuntimeTest {
 
     @Test
     fun `control outbound skips user custom nodes by default`() = runTest {
-        val control = ControlPlane(FeatureRegistry(emptyList()))
+        val control = UnifiedPolicy(FeatureRegistry(emptyList()))
         val runtime = PipelineRuntime(control)
         runtime.registerOutboundNode(object : OutboundNode {
             override val key: String = "custom-control"

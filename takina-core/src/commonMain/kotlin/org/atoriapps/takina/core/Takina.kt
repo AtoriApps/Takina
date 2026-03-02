@@ -11,11 +11,10 @@ import org.atoriapps.takina.core.connections.FinalReconnect
 import org.atoriapps.takina.core.connections.ReconnectPolicy
 import org.atoriapps.takina.core.connections.ReconnectDefaults
 import org.atoriapps.takina.core.connections.ReconnectConfigPaths
-import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
-import org.atoriapps.takina.core.controlling.ControlPlane
+import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.error.ErrorDomain
 import org.atoriapps.takina.core.error.TakinaErrors
 import org.atoriapps.takina.core.events.AccountAddedEvent
@@ -175,7 +174,7 @@ internal class CoreTakina(
 
     private val installedFeatures: List<InstalledFeature> = resolvePresetFeatures(featurePreset) + bootstrapConfiguration.features
     private val featureRegistry: FeatureRegistry
-    private val controlPlane: ControlPlane
+    private val unifiedPolicy: UnifiedPolicy
     private val pipelineRuntime: PipelineRuntime
     override val runtime: TakinaRuntime
     override val request: TakinaRequestApi
@@ -193,9 +192,9 @@ internal class CoreTakina(
         FeatureTopologyValidator.validateOrThrow(installedFeatures)
 
         featureRegistry = FeatureRegistry(installedFeatures)
-        controlPlane = ControlPlane(featureRegistry)
-        pipelineRuntime = PipelineRuntime(controlPlane)
-        runtime = TakinaRuntime(controlPlane, pipelineRuntime)
+        unifiedPolicy = UnifiedPolicy(featureRegistry)
+        pipelineRuntime = PipelineRuntime(unifiedPolicy)
+        runtime = TakinaRuntime(unifiedPolicy, pipelineRuntime)
         request = TakinaRequestApi(this)
 
         // 从功能实例提取API和节点并注册
@@ -255,8 +254,8 @@ internal class CoreTakina(
     }
 
     private fun applyNodePolicyDraft(draft: NodePolicyDraft) {
-        draft.enabled?.let { enabled -> controlPlane.setNodeEnabled(draft.nodeKey, draft.scope, enabled) }
-        draft.order?.let { order -> controlPlane.setNodeOrder(draft.nodeKey, draft.scope, order) }
+        draft.enabled?.let { enabled -> unifiedPolicy.setNodeEnabled(draft.nodeKey, draft.scope, enabled) }
+        draft.order?.let { order -> unifiedPolicy.setNodeOrder(draft.nodeKey, draft.scope, order) }
     }
 
     override fun removeAccount(jid: BareJid) {
@@ -301,7 +300,7 @@ internal class CoreTakina(
         if (machine.currentState() == ConnectionState.CLOSED) transition(jid, machine, ConnectionState.IDLE)
 
         runtime.setAccountState(jid, AccountState.CONNECTING)
-        controlPlane.onNextConnectionBoundary()
+        unifiedPolicy.onNextConnectionBoundary()
 
         val transport = XmppTransportFactoryRegistry.factory(
             account.getConnectionConfig(),
@@ -357,7 +356,7 @@ internal class CoreTakina(
     override suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome> {
         ensureStarted()
 
-        controlPlane.onNextItemBoundary()
+        unifiedPolicy.onNextItemBoundary()
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
         val scope = Scope.Message(owner, request.to, request.messageId)
@@ -387,7 +386,7 @@ internal class CoreTakina(
     override suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome> {
         ensureStarted()
 
-        controlPlane.onNextItemBoundary()
+        unifiedPolicy.onNextItemBoundary()
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
         val raw = XmlWriter.render(xml("presence") {
@@ -414,7 +413,7 @@ internal class CoreTakina(
     override suspend fun sendIq(request: IqRequest): TakinaResult<IqOutcome> {
         ensureStarted()
 
-        controlPlane.onNextItemBoundary()
+        unifiedPolicy.onNextItemBoundary()
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
         val payloadElement = request.payload.trim().takeIf { it.isNotEmpty() }?.let { XmlParser.parseElementOrNull(it) }
@@ -441,12 +440,12 @@ internal class CoreTakina(
     }
 
     internal fun applyCapability(featureProvider: TakinaFeatureProvider<*>, scope: Scope, enabled: Boolean) {
-        controlPlane.setFeatureEnabled(featureProvider, scope, enabled)
+        unifiedPolicy.setFeatureEnabled(featureProvider, scope, enabled)
         events.emit(FeatureStateChangedEvent(feature = featureProvider.id, enabled = enabled))
     }
 
     internal fun applyConfig(path: String, value: Any?, scope: Scope, accountOwner: BareJid?) {
-        val result = controlPlane.applyConfig(path, value, scope)
+        val result = unifiedPolicy.applyConfig(path, value, scope)
         val eventPath = result.path
 
         when {
@@ -488,11 +487,11 @@ internal class CoreTakina(
         )
 
         val policy = ReconnectPolicy(
-            enabled = controlPlane.currentConfig(ReconnectConfigPaths.ENABLED, Scope.Account(owner)) as? Boolean ?: ReconnectDefaults.ENABLED,
-            delayMillis = controlPlane.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)) as? Long ?: ReconnectDefaults.DELAY_MILLIS,
-            factor = controlPlane.currentConfig(ReconnectConfigPaths.FACTOR, Scope.Account(owner)) as? Double ?: ReconnectDefaults.FACTOR,
-            jitter = controlPlane.currentConfig(ReconnectConfigPaths.JITTER, Scope.Account(owner)) as? Double ?: ReconnectDefaults.JITTER,
-            maxAttempts = controlPlane.currentConfig(ReconnectConfigPaths.MAX_ATTEMPTS, Scope.Account(owner)) as? Int ?: ReconnectDefaults.MAX_ATTEMPTS,
+            enabled = unifiedPolicy.currentConfig(ReconnectConfigPaths.ENABLED, Scope.Account(owner)) as? Boolean ?: ReconnectDefaults.ENABLED,
+            delayMillis = unifiedPolicy.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)) as? Long ?: ReconnectDefaults.DELAY_MILLIS,
+            factor = unifiedPolicy.currentConfig(ReconnectConfigPaths.FACTOR, Scope.Account(owner)) as? Double ?: ReconnectDefaults.FACTOR,
+            jitter = unifiedPolicy.currentConfig(ReconnectConfigPaths.JITTER, Scope.Account(owner)) as? Double ?: ReconnectDefaults.JITTER,
+            maxAttempts = unifiedPolicy.currentConfig(ReconnectConfigPaths.MAX_ATTEMPTS, Scope.Account(owner)) as? Int ?: ReconnectDefaults.MAX_ATTEMPTS,
         )
 
         val outcome = finalReconnect.perform(owner, policy, authHardFailure = authHardFailure)
@@ -527,7 +526,7 @@ internal class CoreTakina(
 
     private suspend fun handleInboundFrame(owner: BareJid, frame: String) {
         events.emit(RawFrameInboundEvent(owner = owner, xml = frame))
-        controlPlane.onNextItemBoundary()
+        unifiedPolicy.onNextItemBoundary()
         val classification = classifyInbound(frame)
         val scope = Scope.Account(owner)
         val processed = pipelineRuntime.executeInbound(
@@ -618,11 +617,11 @@ internal class CoreTakina(
     private fun applyConfigPreset(configPreset: ConfigPreset) {
         when (configPreset) {
             ConfigPreset.Default -> {
-                controlPlane.applyConfig(ReconnectConfigPaths.ENABLED, ReconnectDefaults.ENABLED, Scope.Preset)
-                controlPlane.applyConfig(ReconnectConfigPaths.DELAY, ReconnectDefaults.DELAY_MILLIS, Scope.Preset)
-                controlPlane.applyConfig(ReconnectConfigPaths.FACTOR, ReconnectDefaults.FACTOR, Scope.Preset)
-                controlPlane.applyConfig(ReconnectConfigPaths.JITTER, ReconnectDefaults.JITTER, Scope.Preset)
-                controlPlane.applyConfig(ReconnectConfigPaths.MAX_ATTEMPTS, ReconnectDefaults.MAX_ATTEMPTS, Scope.Preset)
+                unifiedPolicy.applyConfig(ReconnectConfigPaths.ENABLED, ReconnectDefaults.ENABLED, Scope.Preset)
+                unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, ReconnectDefaults.DELAY_MILLIS, Scope.Preset)
+                unifiedPolicy.applyConfig(ReconnectConfigPaths.FACTOR, ReconnectDefaults.FACTOR, Scope.Preset)
+                unifiedPolicy.applyConfig(ReconnectConfigPaths.JITTER, ReconnectDefaults.JITTER, Scope.Preset)
+                unifiedPolicy.applyConfig(ReconnectConfigPaths.MAX_ATTEMPTS, ReconnectDefaults.MAX_ATTEMPTS, Scope.Preset)
             }
         }
     }

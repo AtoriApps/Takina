@@ -30,7 +30,7 @@ data class NodeActivationState(
     val explanation: ExplainResult,
 )
 
-class ControlPlane(
+class UnifiedPolicy(
     private val featureRegistry: FeatureRegistry,
     private val configMetaCatalog: Map<String, ConfigMeta> = CoreConfigMetaCatalog.all,
 ) {
@@ -56,7 +56,7 @@ class ControlPlane(
         nodeOrders.getOrPut(nodeKey) { linkedMapOf() }[scope] = order
     }
 
-    // CHECK：NULL遮蔽，tmd都怪无UNDEFINED，记得检查
+    // CHECK：NULL遮蔽？？
     fun applyConfig(path: String, value: Any?, scope: Scope = Scope.Global): ConfigChangeResult {
         // CHECK：确保只阻止用户设定，不阻止内部合并（有的话）
         if (ConnectionConfigPaths.isConnectionPath(path)) return ConfigChangeResult(
@@ -68,6 +68,7 @@ class ControlPlane(
 
         val meta = configMetaCatalog[path] ?: ConfigMeta(path, ApplyMode.IMMEDIATE, mutable = true)
 
+        // TODO：这个只有几个，最好统一，搞个类似这样的{Key(or Path),Default,Validator}
         validateValue(path, value)?.let { reason ->
             return ConfigChangeResult(
                 path = path,

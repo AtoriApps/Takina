@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.atoriapps.takina.core.connections.AccountState
 import org.atoriapps.takina.core.connections.ConnectionState
-import org.atoriapps.takina.core.controlling.ControlPlane
+import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.controlling.FeatureActivation
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
@@ -21,7 +21,7 @@ data class RuntimeHealth(
 
 // TODO：还有什么可以放进Rt，这里面已有的有什么用？
 class TakinaRuntime(
-    private val controlPlane: ControlPlane,
+    private val unifiedPolicy: UnifiedPolicy,
     private val pipelineRuntime: PipelineRuntime,
 ) {
     private val _accountStates = MutableStateFlow<Map<BareJid, AccountState>>(emptyMap())
@@ -41,15 +41,15 @@ class TakinaRuntime(
         _connectionStates.value += (owner to state)
     }
 
-    fun describeActiveFeatures(scope: Scope): List<FeatureActivation> = controlPlane.describeActiveFeatures(scope)
+    fun describeActiveFeatures(scope: Scope): List<FeatureActivation> = unifiedPolicy.describeActiveFeatures(scope)
 
     fun describeActivePipeline(direction: PipelineDirection, scope: Scope): PipelineDescription =
         pipelineRuntime.describeActivePipeline(direction, scope)
 
     fun explainWhyEnabled(target: String, scope: Scope) = if (target.startsWith("feature:")) {
-        controlPlane.explainFeature(target.removePrefix("feature:"), scope)
+        unifiedPolicy.explainFeature(target.removePrefix("feature:"), scope)
     } else {
-        controlPlane.explainNode(target.removePrefix("node:"), null, scope)
+        unifiedPolicy.explainNode(target.removePrefix("node:"), null, scope)
     }
 
     fun nodeMetrics(): List<NodeMetrics> = pipelineRuntime.metricsSnapshot()

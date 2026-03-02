@@ -26,14 +26,10 @@ data class ConfigChangeResult(
 // CHECK：这啥，再看看
 object CoreConfigMetaCatalog {
     val all: Map<String, ConfigMeta> = listOf(
-        // Reconnect keys (actively used by current runtime)
         ConfigMeta(ReconnectConfigPaths.ENABLED, ApplyMode.IMMEDIATE, mutable = true),
         ConfigMeta(ReconnectConfigPaths.DELAY, ApplyMode.IMMEDIATE, mutable = true),
         ConfigMeta(ReconnectConfigPaths.FACTOR, ApplyMode.IMMEDIATE, mutable = true),
         ConfigMeta(ReconnectConfigPaths.JITTER, ApplyMode.IMMEDIATE, mutable = true),
         ConfigMeta(ReconnectConfigPaths.MAX_ATTEMPTS, ApplyMode.IMMEDIATE, mutable = true),
     ).associateBy { it.path }
-
-    // Note: connection.* is intentionally not in ControlPlane catalog.
-    // Those identity/transport params are account-definition-only.
 }

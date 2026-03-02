@@ -3,15 +3,13 @@ package org.atoriapps.takina.core.pipeline
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.TimeSource
-import org.atoriapps.takina.core.controlling.ControlPlane
+import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
 
 // TODO、CHECK：管线about的前后依赖型排序好像没做，另外这个API（about）是否要更名？另外这里面是不是也有Key？再看看
 
-class PipelineRuntime(
-    private val controlPlane: ControlPlane,
-) {
+class PipelineRuntime(private val unifiedPolicy: UnifiedPolicy ) {
     private data class InboundRegistration(
         val node: InboundNode,
         val featureProvider: TakinaFeatureProvider<*>?,
@@ -65,7 +63,7 @@ class PipelineRuntime(
             else -> inboundNodes.filterNot { it.controlOnly }
         }
 
-        val sorted = controlPlane.sortNodesWithVisibilityConflict(
+        val sorted = unifiedPolicy.sortNodesWithVisibilityConflict(
             nodeKeys = candidates.map { it.node.key },
             featureProviderOfNode = { key -> candidates.first { it.node.key == key }.featureProvider },
             scope = scope,
@@ -102,7 +100,7 @@ class PipelineRuntime(
             OutboundClassification.CONTROL -> outboundNodes.filter { it.controlOnly }
         }
 
-        val sorted = controlPlane.sortNodesWithVisibilityConflict(
+        val sorted = unifiedPolicy.sortNodesWithVisibilityConflict(
             nodeKeys = candidates.map { it.node.key },
             featureProviderOfNode = { key -> candidates.first { it.node.key == key }.featureProvider },
             scope = scope,
@@ -143,7 +141,7 @@ class PipelineRuntime(
             PipelineDirection.INBOUND -> inboundNodes.associate { it.node.key to it.featureProvider }
             PipelineDirection.OUTBOUND -> outboundNodes.associate { it.node.key to it.featureProvider }
         }
-        val sorted = controlPlane.sortNodesWithVisibilityConflict(
+        val sorted = unifiedPolicy.sortNodesWithVisibilityConflict(
             nodeKeys = nodeKeys,
             featureProviderOfNode = { registrationsFeatureMap[it] },
             scope = scope,

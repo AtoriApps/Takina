@@ -108,14 +108,14 @@ class PresenceRequestDsl {
             fromProvider = { value }
         }
 
-    // CHECK：这玩意还能to吗
+    // TIPS：如需对人定向发生状态，设置本字段
     var to: BareJid?
         get() = toProvider?.invoke()
         set(value) {
             toProvider = { value }
         }
 
-    // CHECK：这又是啥？？？
+    // TIPS：这是子状态，应为枚举：away、chat、dnd、xa，用户不设置本字段时，意味她可用
     var show: String?
         get() = showProvider?.invoke()
         set(value) {

@@ -15,6 +15,7 @@ interface TakinaFeature {
     val requires: Set<TakinaFeatureProvider<out TakinaFeature>> get() = emptySet()
     val conflictsWith: Set<TakinaFeatureProvider<out TakinaFeature>> get() = emptySet()
 
+    // TIPS：时机在管线、API被注册后
     suspend fun onInstall(context: Takina) {}
     suspend fun onShutdown(context: Takina) {}
 

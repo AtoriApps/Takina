@@ -77,9 +77,10 @@ import org.atoriapps.takina.core.xml.xml
 fun createTakina(
     featurePreset: FeaturePreset = FeaturePreset.Recommended,
     configPreset: ConfigPreset = ConfigPreset.Default,
-    init: TakinaConfiguration.() -> Unit,
+    init: TakinaConfiguration.() -> Unit
 ): Takina {
     val configuration = TakinaConfiguration().apply(init)
+
     return CoreTakina(featurePreset, configPreset, configuration)
 }
 
@@ -92,7 +93,7 @@ interface Takina {
     fun config(init: ConfigDsl.() -> Unit)
     fun addAccount(init: AccountDsl.() -> Unit)
     fun removeAccount(jid: BareJid)
-    fun removeAccount(accountHandle: AccountHandle)= removeAccount(accountHandle.owner)
+    fun removeAccount(accountHandle: AccountHandle) = removeAccount(accountHandle.owner)
     fun getAccountHandleFor(jid: BareJid): AccountHandle
 
     fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
@@ -107,10 +108,7 @@ interface Takina {
     suspend fun shutdown()
 }
 
-class AccountHandle internal constructor(
-    private val takina: CoreTakina,
-    val owner: BareJid,
-) {
+class AccountHandle internal constructor(private val takina: CoreTakina, val owner: BareJid) {
     val request: TakinaRequestApi = TakinaRequestApi(takina, owner)
     val events: TakinaEventBus get() = takina.events
 
@@ -135,29 +133,26 @@ class AccountHandle internal constructor(
 
     fun getDirectChatHandleFor(peer: BareJid): DirectChatHandle = DirectChatHandle(this, peer)
     fun getMucHandleFor(room: BareJid): MucHandle = MucHandle(this, room)
+
+    // 账号失效（被移除）了怎么办
 }
 
-class DirectChatHandle internal constructor(
+abstract class BaseConversationHandle internal constructor(
     private val account: AccountHandle,
-    private val peer: BareJid,
+    private val peer: BareJid
 ) {
     fun message(init: MessageRequestDsl.() -> Unit) = account.request.message {
         to = peer
         init()
     }
+}
 
-    // TODO：应再提供拉黑等方法，但能力由Feature提供，所以应该是扩展方法？
+// TODO：应再提供拉黑等方法，但能力由Feature提供，所以应该是扩展方法？
+class DirectChatHandle internal constructor(account: AccountHandle, peer: BareJid) : BaseConversationHandle(account, peer) {
 }
 
 // HACK：我觉得这个类应该由Feature作为扩展提供，或者是Feature注入扩展方法。因为Muc是Feature提供的。MucHandle应提供如join、leave的便捷方法
-class MucHandle internal constructor(
-    private val account: AccountHandle,
-    private val room: BareJid,
-) {
-    fun message(init: MessageRequestDsl.() -> Unit) = account.request.message {
-        to = room
-        init()
-    }
+class MucHandle internal constructor(account: AccountHandle, peer: BareJid) : BaseConversationHandle(account, peer) {
 }
 
 // TODO、CHECK：内部要不要拆，会不会太重？
@@ -193,13 +188,17 @@ internal class CoreTakina(
         runtime = TakinaRuntime(controlPlane, pipelineRuntime)
         request = TakinaRequestApi(this)
 
+        // 从功能实例提取API和节点并注册
         installedFeatures.forEach { installed ->
             val feature = installed.feature
+
             feature.inboundNodes().forEach { pipelineRuntime.registerInboundNode(it, installed.provider) }
             feature.outboundNodes().forEach { pipelineRuntime.registerOutboundNode(it, installed.provider) }
+
             if (feature is ApiProvidingFeature<*>) featureApisByProvider[installed.provider] = feature.api()
         }
 
+        // 应用配置
         applyConfigPreset(configPreset)
         bootstrapConfiguration.configDrafts.forEach { applyConfig(it.path, it.value, it.scope, null) }
         bootstrapConfiguration.capabilityDrafts.forEach { applyCapability(it.featureProvider, it.scope, it.enabled) }
@@ -207,8 +206,11 @@ internal class CoreTakina(
             it.enabled?.let { enabled -> controlPlane.setNodeEnabled(it.nodeKey, it.scope, enabled) }
             it.order?.let { order -> controlPlane.setNodeOrder(it.nodeKey, it.scope, order) }
         }
-        bootstrapConfiguration.accounts.values.forEach { installAccount(it, emitEvent = true) }
 
+        // 安装账号
+        bootstrapConfiguration.accounts.values.forEach { installAccount(it) }
+
+        // 回调onInstall
         runBlocking { installedFeatures.forEach { installed -> installed.feature.onInstall(this@CoreTakina) } }
 
         started = true
@@ -227,7 +229,7 @@ internal class CoreTakina(
 
     override fun addAccount(init: AccountDsl.() -> Unit) {
         ensureStarted()
-        installAccount(AccountDsl().apply(init).build(), emitEvent = true)
+        installAccount(AccountDsl().apply(init).build())
     }
 
     override fun removeAccount(jid: BareJid) {
@@ -261,6 +263,7 @@ internal class CoreTakina(
 
     override suspend fun connect(jid: BareJid) {
         ensureStarted()
+
         val account = requireNotNull(accounts[jid]) { "Account not found: $jid" }
         val machine = requireNotNull(stateMachines[jid]) { "State machine not found: $jid" }
         val accountScope = Scope.Account(jid)
@@ -269,9 +272,8 @@ internal class CoreTakina(
             runtime.setAccountState(jid, AccountState.ONLINE)
             return
         }
-        if (machine.currentState() == ConnectionState.CLOSED) {
-            transition(jid, machine, ConnectionState.IDLE)
-        }
+
+        if (machine.currentState() == ConnectionState.CLOSED) transition(jid, machine, ConnectionState.IDLE)
 
         runtime.setAccountState(jid, AccountState.CONNECTING)
         controlPlane.onNextConnectionBoundary()
@@ -280,15 +282,15 @@ internal class CoreTakina(
             account.getConnectionConfig(accountScope),
             transportCallbacksFor(jid),
         )
+
         transports.remove(jid)?.let { runCatching { it.disconnect() } }
         transports[jid] = transport
 
-        runCatching { transport.connect(account.passwordProvider()) }
-            .onFailure {
-                runtime.setAccountState(jid, AccountState.DEGRADED)
-                events.emit(RequestFailedEvent(jid, "connect", it.message ?: "connect failed"))
-                throw it
-            }
+        runCatching { transport.connect(account.passwordProvider()) }.onFailure {
+            runtime.setAccountState(jid, AccountState.DEGRADED)
+            events.emit(RequestFailedEvent(jid, "connect", it.message ?: "connect failed"))
+            throw it
+        }
 
         runtime.setAccountState(jid, AccountState.ONLINE)
         events.emit(SessionReadyEvent(jid))
@@ -296,12 +298,13 @@ internal class CoreTakina(
 
     override suspend fun disconnect(jid: BareJid) {
         ensureStarted()
+
         val machine = requireNotNull(stateMachines[jid]) { "Account not found: $jid" }
         intentionalDisconnectOwners += jid
         runCatching { transports.remove(jid)?.disconnect() }
-        if (machine.currentState() != ConnectionState.CLOSED) {
-            transition(jid, machine, ConnectionState.CLOSED)
-        }
+
+        if (machine.currentState() != ConnectionState.CLOSED) transition(jid, machine, ConnectionState.CLOSED)
+
         runtime.setAccountState(jid, AccountState.OFFLINE)
         intentionalDisconnectOwners -= jid
     }
@@ -325,8 +328,10 @@ internal class CoreTakina(
         events.emit(TakinaShutdownCompletedEvent())
     }
 
+    // HACK：不应该这么简单地在这里构建吧，没准未来解耦？
     override suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome> {
         ensureStarted()
+
         controlPlane.onNextItemBoundary()
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
@@ -337,7 +342,9 @@ internal class CoreTakina(
             attr("from", transport.boundJid)
             element("body") { text(request.body) }
         })
+
         val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope)
+
         return if (processed == null) {
             events.emit(MessageSendFailedEvent(owner, request.to, "Dropped by outbound node"))
             TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 201, "Outbound message dropped", retryable = false))
@@ -354,6 +361,7 @@ internal class CoreTakina(
 
     override suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome> {
         ensureStarted()
+
         controlPlane.onNextItemBoundary()
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
@@ -363,9 +371,11 @@ internal class CoreTakina(
             request.show?.let { element("show") { text(it) } }
             request.status?.let { element("status") { text(it) } }
         })
+
         val scope = Scope.Account(owner)
         val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope)
             ?: return TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 202, "Outbound presence dropped", retryable = false))
+
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = "presence"))
             transport.sendRaw(processed)
@@ -378,25 +388,23 @@ internal class CoreTakina(
 
     override suspend fun sendIq(request: IqRequest): TakinaResult<IqOutcome> {
         ensureStarted()
+
         controlPlane.onNextItemBoundary()
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
         val payloadElement = request.payload.trim().takeIf { it.isNotEmpty() }?.let { XmlParser.parseElementOrNull(it) }
-        if (request.payload.isNotBlank() && payloadElement == null) {
-            return TakinaResult.Err(TakinaErrors.of(ErrorDomain.CONFIG, 302, "IQ payload must be valid XML element", retryable = false))
-        }
+        if (request.payload.isNotBlank() && payloadElement == null) return TakinaResult.Err(TakinaErrors.of(ErrorDomain.CONFIG, 302, "IQ payload must be valid XML element", retryable = false))
         val raw = XmlWriter.render(xml("iq") {
             attr("id", request.id)
             attr("type", request.type)
             attr("to", request.to?.toString())
             attr("from", transport.boundJid)
-            if (payloadElement != null) {
-                node(payloadElement)
-            }
+            if (payloadElement != null) node(payloadElement)
         })
         val scope = Scope.Account(owner)
         val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope)
             ?: return TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 203, "Outbound iq dropped", retryable = false))
+
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = "iq"))
             transport.sendRaw(processed)
@@ -414,6 +422,7 @@ internal class CoreTakina(
 
     internal fun applyConfig(path: String, value: Any?, scope: Scope, accountOwner: BareJid?) {
         val result = controlPlane.applyConfig(path, value, scope)
+
         when {
             result.rejectedReason != null -> events.emit(ConfigRejectedEvent(path, result.rejectedReason))
             result.applied -> events.emit(ConfigAppliedEvent(path, result.applyMode.name))
@@ -422,18 +431,15 @@ internal class CoreTakina(
 
         when (scope) {
             Scope.Global, Scope.Preset -> events.emit(GlobalConfigChangedEvent(path))
+
             is Scope.Account -> events.emit(AccountConfigChangedEvent(scope.owner, path))
+
             is Scope.Conversation -> events.emit(AccountConfigChangedEvent(scope.owner, path))
+
             is Scope.Message -> events.emit(AccountConfigChangedEvent(scope.owner, path))
         }
-        if (
-            accountOwner != null &&
-            scope !is Scope.Account &&
-            scope !is Scope.Conversation &&
-            scope !is Scope.Message
-        ) {
-            events.emit(AccountConfigChangedEvent(accountOwner, path))
-        }
+
+        if (accountOwner != null && scope !is Scope.Account && scope !is Scope.Conversation && scope !is Scope.Message) events.emit(AccountConfigChangedEvent(accountOwner, path))
     }
 
     suspend fun onUnexpectedDisconnect(owner: BareJid, reason: String?, authHardFailure: Boolean) {
@@ -441,7 +447,9 @@ internal class CoreTakina(
         runtime.setAccountState(owner, AccountState.DEGRADED)
         events.emit(UnexpectedDisconnectedEvent(owner, reason))
 
-        val reconnect = FinalReconnect(
+        // TODO：要在这里加个插件回调钩子，如果插件（如SM）处理成功，则不触发FinalReconnect。可能也要加发一个原始断连事件？
+
+        val finalReconnect = FinalReconnect(
             onSchedule = { attempt, delay ->
                 runtime.setAccountState(owner, AccountState.RECONNECTING)
                 if (machine.currentState() != ConnectionState.RECONNECT_WAIT) {
@@ -451,7 +459,7 @@ internal class CoreTakina(
             },
             connectAttempt = {
                 runCatching { connect(owner) }.isSuccess
-            },
+            }
         )
 
         val policy = ReconnectPolicy(
@@ -462,7 +470,7 @@ internal class CoreTakina(
             maxAttempts = controlPlane.currentConfig("reconnect.maxAttempts", Scope.Account(owner)) as? Int ?: 5,
         )
 
-        val outcome = reconnect.perform(owner, policy, authHardFailure = authHardFailure)
+        val outcome = finalReconnect.perform(owner, policy, authHardFailure = authHardFailure)
         if (!outcome.succeed) {
             runtime.setAccountState(owner, AccountState.FAILED)
             events.emit(ReconnectExhaustedEvent(owner, outcome.attempts))
@@ -471,6 +479,7 @@ internal class CoreTakina(
 
     private fun transportCallbacksFor(owner: BareJid): XmppTransportCallbacks {
         val machine = requireNotNull(stateMachines[owner]) { "State machine not found for owner $owner" }
+
         return object : XmppTransportCallbacks {
             override suspend fun onStateChanged(to: ConnectionState) {
                 transition(owner, machine, to)
@@ -531,9 +540,7 @@ internal class CoreTakina(
                 events.emit(IqReceivedEvent(owner = owner, from = from))
             }
 
-            InboundClassification.UNKNOWN -> {
-                events.emit(UnknownFrameInboundEvent(owner = owner, raw = processed))
-            }
+            InboundClassification.UNKNOWN -> events.emit(UnknownFrameInboundEvent(owner = owner, raw = processed))
 
             else -> Unit
         }
@@ -557,12 +564,14 @@ internal class CoreTakina(
         events.emit(ConnectionStateChangedEvent(owner, result.from, result.to))
     }
 
-    private fun installAccount(account: AccountDefinition, emitEvent: Boolean) {
+    private fun installAccount(account: AccountDefinition) {
         require(accounts.putIfAbsent(account.jid, account) == null) { "Duplicate account: ${account.jid}" }
+
         stateMachines[account.jid] = ConnectionStateMachine(ConnectionState.IDLE)
         runtime.setAccountState(account.jid, AccountState.REGISTERED)
         runtime.setConnectionState(account.jid, ConnectionState.IDLE)
-        if (emitEvent) events.emit(AccountAddedEvent(account.jid))
+
+        events.emit(AccountAddedEvent(account.jid))
     }
 
     private fun requireConnectedTransport(owner: BareJid): XmppTransport {
@@ -581,6 +590,7 @@ internal class CoreTakina(
         throw IllegalStateException(error.message)
     }
 
+    // CHECK：这里有点硬编码，可能要提取独立
     private fun applyConfigPreset(configPreset: ConfigPreset) {
         when (configPreset) {
             ConfigPreset.Default -> {
@@ -611,9 +621,7 @@ internal class CoreTakina(
         FeaturePreset.Full -> emptyList()
     }
 
-    private fun ensureStarted() {
-        check(started && !shutdown) { "Takina is not active" }
-    }
+    private fun ensureStarted() = check(started && !shutdown) { "Takina is not active" }
 
     private fun AccountDefinition.getConnectionConfig(scope: Scope): ConnectionConfig {
         val hostOverride = controlPlane.currentConfig("connection.host", scope) as? String
@@ -636,5 +644,4 @@ internal class CoreTakina(
             trustAllCertificates = trustAllCertificates,
         )
     }
-
 }

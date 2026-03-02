@@ -23,6 +23,7 @@ sealed interface Scope {
         override val kind: ScopeKind = ScopeKind.ACCOUNT
     }
 
+    // 这玩意是取私聊和群聊的并集么
     data class Conversation(
         val owner: BareJid,
         val peer: BareJid,

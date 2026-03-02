@@ -41,32 +41,21 @@ class ControlPlane(
     private val nextItemConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
     private val nextConnectionConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
 
-    fun setFeatureEnabled(
-        provider: TakinaFeatureProvider<*>,
-        scope: Scope,
-        enabled: Boolean,
-    ) {
+    fun setFeatureEnabled(provider: TakinaFeatureProvider<*>, scope: Scope, enabled: Boolean, ) {
         featureToggles.getOrPut(provider) { linkedMapOf() }[scope] = enabled
     }
 
-    fun setNodeEnabled(
-        nodeKey: String,
-        scope: Scope,
-        enabled: Boolean,
-    ) {
+    fun setNodeEnabled(nodeKey: String, scope: Scope, enabled: Boolean, ) {
         nodeToggles.getOrPut(nodeKey) { linkedMapOf() }[scope] = enabled
     }
 
-    fun setNodeOrder(
-        nodeKey: String,
-        scope: Scope,
-        order: Int,
-    ) {
+    fun setNodeOrder(nodeKey: String, scope: Scope, order: Int, ) {
         nodeOrders.getOrPut(nodeKey) { linkedMapOf() }[scope] = order
     }
 
     fun applyConfig(path: String, value: Any?, scope: Scope = Scope.Global): ConfigChangeResult {
         val meta = configMetaCatalog[path] ?: ConfigMeta(path, ApplyMode.IMMEDIATE, mutable = true)
+
         validateValue(path, value)?.let { reason ->
             return ConfigChangeResult(
                 path = path,
@@ -75,6 +64,7 @@ class ControlPlane(
                 rejectedReason = reason,
             )
         }
+
         if (!meta.mutable || meta.applyMode == ApplyMode.BUILD_TIME_IMMUTABLE) return ConfigChangeResult(
             path = path,
             applied = false,
@@ -118,9 +108,7 @@ class ControlPlane(
 
     fun currentConfig(path: String, scope: Scope = Scope.Global): Any? {
         val values = activeConfig[path] ?: return null
-        for (candidate in scope.fallbackChain()) {
-            if (candidate in values) return values[candidate]
-        }
+        for (candidate in scope.fallbackChain()) if (candidate in values) return values[candidate]
         return null
     }
 
@@ -281,10 +269,7 @@ class ControlPlane(
         else -> null
     }
 
-    private fun mergeScopedConfig(
-        from: Map<String, MutableMap<Scope, Any?>>,
-        into: MutableMap<String, MutableMap<Scope, Any?>>,
-    ) {
+    private fun mergeScopedConfig(from: Map<String, MutableMap<Scope, Any?>>, into: MutableMap<String, MutableMap<Scope, Any?>>, ) {
         for ((path, scoped) in from) {
             val target = into.getOrPut(path) { linkedMapOf() }
             target.putAll(scoped)

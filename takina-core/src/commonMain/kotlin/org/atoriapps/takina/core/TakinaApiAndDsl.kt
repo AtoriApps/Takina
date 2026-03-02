@@ -67,11 +67,12 @@ class TakinaConfiguration internal constructor() {
         require(accounts.putIfAbsent(built.jid, built) == null) { "Duplicate account: ${built.jid}" }
     }
 
+    // TIPS：这个（功能的安装和配置）只能全局
     fun features(init: FeaturesDsl.() -> Unit) {
         FeaturesDsl(features, featureConfigureDrafts).apply(init)
     }
 
-    // CHECK：好像不对，能力不是按作用域控制功能的开关吗
+    // CHECK aft 260302：好像不对，能力不是按作用域控制功能的开关吗
     fun capability(init: CapabilityDsl.() -> Unit) {
         CapabilityDsl { provider, scope, enabled ->
             capabilityDrafts += CapabilityDraft(provider, scope, enabled)
@@ -260,9 +261,8 @@ class FeaturesDsl internal constructor(
             featureProvider = provider,
             apply = { installed ->
                 require(provider.featureType.isInstance(installed)) { "Installed feature type mismatch for ${provider.id}" }
-                @Suppress("UNCHECKED_CAST")
-                (installed as FEATURE).init()
-            },
+                @Suppress("UNCHECKED_CAST") init(installed as FEATURE)
+            }
         )
     }
 
@@ -273,10 +273,9 @@ class FeaturesDsl internal constructor(
 }
 
 @TakinaDsl
-class CapabilityDsl internal constructor(
-    private val sink: (TakinaFeatureProvider<*>, Scope, Boolean) -> Unit,
-) {
+class CapabilityDsl internal constructor(private val sink: (TakinaFeatureProvider<*>, Scope, Boolean) -> Unit ) {
     fun enable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = sink(provider, scope, true)
+
     fun disable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = sink(provider, scope, false)
 }
 

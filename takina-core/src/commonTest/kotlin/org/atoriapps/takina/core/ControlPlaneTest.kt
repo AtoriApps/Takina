@@ -6,7 +6,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.controlling.ApplyMode
 import org.atoriapps.takina.core.controlling.ControlPlane
-import org.atoriapps.takina.core.connections.SecurityMode
+import org.atoriapps.takina.core.connections.ConnectionConfigPaths
+import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.features.FeatureRegistry
 import org.atoriapps.takina.core.features.InstalledFeature
 import org.atoriapps.takina.core.features.TakinaFeature
@@ -50,36 +51,38 @@ class ControlPlaneTest {
     }
 
     @Test
-    fun `config apply modes follow v1 behavior`() {
-        val immediate = controlPlane.applyConfig("reconnect.enabled", false)
+    fun `config apply validates value type and rejects connection identity keys`() {
+        val immediate = controlPlane.applyConfig(ReconnectConfigPaths.ENABLED, false)
         assertTrue(immediate.applied)
 
-        val nextItem = controlPlane.applyConfig("pipeline.businessInbound.enabled", false)
-        assertFalse(nextItem.applied)
-        controlPlane.onNextItemBoundary()
-        assertEquals(false, controlPlane.currentConfig("pipeline.businessInbound.enabled"))
+        val badReconnect = controlPlane.applyConfig(ReconnectConfigPaths.ENABLED, "false")
+        assertFalse(badReconnect.applied)
+        assertTrue(badReconnect.rejectedReason != null)
 
-        val immutable = controlPlane.applyConfig("features.installSet", "abc")
-        assertFalse(immutable.applied)
-        assertTrue(immutable.rejectedReason != null)
-
-        val badSecurityMode = controlPlane.applyConfig("securityMode", "START_TLS")
-        assertFalse(badSecurityMode.applied)
-        assertTrue(badSecurityMode.rejectedReason != null)
-
-        val goodSecurityMode = controlPlane.applyConfig("securityMode", SecurityMode.START_TLS)
-        assertFalse(goodSecurityMode.applied)
-        assertEquals(goodSecurityMode.rejectedReason, null)
+        val connectionRejected = controlPlane.applyConfig(ConnectionConfigPaths.HOST, "next.example.com")
+        assertFalse(connectionRejected.applied)
+        assertTrue(connectionRejected.rejectedReason?.contains("account-definition-only") == true)
     }
 
     @Test
     fun `config resolves by scope chain with account override over global and preset`() {
-        controlPlane.applyConfig("reconnect.delay", 1_000L, Scope.Preset)
-        controlPlane.applyConfig("reconnect.delay", 2_000L, Scope.Global)
-        controlPlane.applyConfig("reconnect.delay", 3_000L, Scope.Account(owner))
+        controlPlane.applyConfig(ReconnectConfigPaths.DELAY, 1_000L, Scope.Preset)
+        controlPlane.applyConfig(ReconnectConfigPaths.DELAY, 2_000L, Scope.Global)
+        controlPlane.applyConfig(ReconnectConfigPaths.DELAY, 3_000L, Scope.Account(owner))
 
-        assertEquals(3_000L, controlPlane.currentConfig("reconnect.delay", Scope.Account(owner)))
-        assertEquals(2_000L, controlPlane.currentConfig("reconnect.delay", Scope.Global))
+        assertEquals(3_000L, controlPlane.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)))
+        assertEquals(2_000L, controlPlane.currentConfig(ReconnectConfigPaths.DELAY, Scope.Global))
+    }
+
+    @Test
+    fun `config null unsets scoped value and falls back to broader scope`() {
+        controlPlane.applyConfig(ReconnectConfigPaths.DELAY, 1_000L, Scope.Preset)
+        controlPlane.applyConfig(ReconnectConfigPaths.DELAY, 2_000L, Scope.Global)
+        controlPlane.applyConfig(ReconnectConfigPaths.DELAY, 3_000L, Scope.Account(owner))
+
+        controlPlane.applyConfig(ReconnectConfigPaths.DELAY, null, Scope.Account(owner))
+
+        assertEquals(2_000L, controlPlane.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)))
     }
 
     private fun provider(featureId: String): TakinaFeatureProvider<TakinaFeature> = object : TakinaFeatureProvider<TakinaFeature> {

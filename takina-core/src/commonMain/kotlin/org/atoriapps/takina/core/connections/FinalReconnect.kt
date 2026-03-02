@@ -19,11 +19,11 @@ interface SmRecoveryCoordinator {
 }
 
 data class ReconnectPolicy(
-    val enabled: Boolean = true,
-    val delayMillis: Long = 1_000,
-    val factor: Double = 2.0,
-    val jitter: Double = 0.0,
-    val maxAttempts: Int = 5,
+    val enabled: Boolean = ReconnectDefaults.ENABLED,
+    val delayMillis: Long = ReconnectDefaults.DELAY_MILLIS,
+    val factor: Double = ReconnectDefaults.FACTOR,
+    val jitter: Double = ReconnectDefaults.JITTER,
+    val maxAttempts: Int = ReconnectDefaults.MAX_ATTEMPTS,
 )
 
 data class ReconnectOutcome(

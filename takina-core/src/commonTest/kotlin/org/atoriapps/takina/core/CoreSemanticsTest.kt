@@ -3,15 +3,17 @@ package org.atoriapps.takina.core
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.connections.AccountState
+import org.atoriapps.takina.core.connections.ConnectionConfigPaths
 import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
 import org.atoriapps.takina.core.controlling.ApplyMode
-import org.atoriapps.takina.core.events.ConfigApplyDeferredEvent
 import org.atoriapps.takina.core.events.ConfigRejectedEvent
 import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
 import org.atoriapps.takina.core.events.RawFrameInboundEvent
@@ -97,8 +99,7 @@ class CoreSemanticsTest {
     }
 
     @Test
-    fun `config apply mode emits deferred and rejected events`() = runTest {
-        var deferred = 0
+    fun `config apply emits rejected event for invalid value`() = runTest {
         var rejected = 0
         val takina = createTakina {
             addAccount {
@@ -107,15 +108,12 @@ class CoreSemanticsTest {
             }
         }
 
-        takina.events.on(ConfigApplyDeferredEvent::class) { deferred += 1 }
         takina.events.on(ConfigRejectedEvent::class) { rejected += 1 }
 
         takina.configs {
-            set("pipeline.businessInbound.enabled", false)
-            set("features.installSet", "immutable")
+            set(ReconnectConfigPaths.ENABLED, "false")
         }
 
-        assertEquals(1, deferred)
         assertEquals(1, rejected)
     }
 
@@ -143,7 +141,7 @@ class CoreSemanticsTest {
     }
 
     @Test
-    fun `next connection config is applied when reconnecting`() = runTest {
+    fun `connection host is defined by account and cannot be overridden by configs`() = runTest {
         val captured = mutableListOf<ConnectionConfig>()
         val sent = mutableListOf<String>()
         val oldFactory = XmppTransportFactoryRegistry.factory
@@ -156,22 +154,24 @@ class CoreSemanticsTest {
                 addAccount {
                     jid = alice
                     password = "secret"
-                }
-                configs {
-                    set("connection.host", "first.example.com", scope = Scope.Account(alice))
+                    connection {
+                        host = "first.example.com"
+                    }
                 }
             }
 
             takina.connect(alice)
             takina.disconnect(alice)
 
-            takina.configs {
-                set("connection.host", "second.example.com", scope = Scope.Account(alice))
+            assertFailsWith<IllegalArgumentException> {
+                takina.configs {
+                    set(ConnectionConfigPaths.HOST, "second.example.com", scope = Scope.Account(alice))
+                }
             }
             takina.connect(alice)
 
             assertEquals("first.example.com", captured.first().host)
-            assertEquals("second.example.com", captured.last().host)
+            assertEquals("first.example.com", captured.last().host)
             takina.shutdown()
         } finally {
             XmppTransportFactoryRegistry.factory = oldFactory

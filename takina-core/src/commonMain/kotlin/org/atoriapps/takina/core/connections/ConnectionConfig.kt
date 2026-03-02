@@ -23,7 +23,7 @@ data class ConnectionConfig(
     val port: Int,
     val securityMode: SecurityMode,
     val resource: String,
-    val saslMechanisms: List<String> = listOf("SCRAM-SHA-256", "SCRAM-SHA-1", "DIGEST-MD5", "PLAIN"),
-    val connectTimeoutMillis: Int = 10_000,
-    val trustAllCertificates: Boolean = false,
+    val saslMechanisms: List<String> = ConnectionDefaults.SASL_MECHANISMS,
+    val connectTimeoutMillis: Int = ConnectionDefaults.CONNECT_TIMEOUT_MILLIS,
+    val trustAllCertificates: Boolean = ConnectionDefaults.TRUST_ALL_CERTIFICATES,
 )

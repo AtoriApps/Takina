@@ -6,7 +6,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import org.atoriapps.takina.core.connections.ConnectionConfig
+import org.atoriapps.takina.core.connections.ConnectionConfigPaths
 import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
@@ -77,8 +79,9 @@ class AccountScopedDslTest {
                 addAccount {
                     jid = alice
                     password = "secret"
+                    connection { host = "bootstrap.example.com" }
                     capabilities { disable(AccountSwitchableFeatureProvider) }
-                    configs { set("connection.host", "bootstrap.example.com") }
+                    configs { set(ReconnectConfigPaths.ENABLED, false) }
                 }
             }
 
@@ -104,7 +107,8 @@ class AccountScopedDslTest {
             val takina = createTakina {
                 features { install(AccountSwitchableFeatureProvider) }
                 addAccount {
-                    configs { set("connection.host", "late-jid.example.com") }
+                    connection { host = "late-jid.example.com" }
+                    configs { set(ReconnectConfigPaths.DELAY, 321L) }
                     capabilities { disable(AccountSwitchableFeatureProvider) }
                     pipelines {
                         outbound {
@@ -142,8 +146,9 @@ class AccountScopedDslTest {
             takina.addAccount {
                 jid = alice
                 password = "secret"
+                connection { host = "runtime.example.com" }
                 capabilities { disable(AccountSwitchableFeatureProvider) }
-                configs { set("connection.host", "runtime.example.com") }
+                configs { set(ReconnectConfigPaths.MAX_ATTEMPTS, 2) }
             }
 
             val accountExplain = takina.runtime.explainWhyEnabled("feature:account-switchable", Scope.Account(alice))
@@ -196,6 +201,18 @@ class AccountScopedDslTest {
                 addAccount {
                     jid = alice
                     password = "secret"
+                    configs {
+                        set(ConnectionConfigPaths.HOST, "forbidden.example.com")
+                    }
+                }
+            }
+        }
+
+        assertFailsWith<IllegalArgumentException> {
+            createTakina {
+                addAccount {
+                    jid = alice
+                    password = "secret"
                     pipelines {
                         outbound {
                             about("bad-global-scope-node", scope = Scope.Global) {
@@ -223,7 +240,12 @@ class AccountScopedDslTest {
             }
             assertFailsWith<IllegalArgumentException> {
                 account.configs {
-                    set("reconnect.enabled", false, scope = Scope.Global)
+                    set(ReconnectConfigPaths.ENABLED, false, scope = Scope.Global)
+                }
+            }
+            assertFailsWith<IllegalArgumentException> {
+                account.configs {
+                    set(ConnectionConfigPaths.HOST, "forbidden.example.com")
                 }
             }
         } finally {

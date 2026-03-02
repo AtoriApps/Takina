@@ -4,10 +4,13 @@ import kotlinx.coroutines.runBlocking
 import org.atoriapps.takina.core.bootstrap.FeatureTopologyValidator
 import org.atoriapps.takina.core.connections.AccountState
 import org.atoriapps.takina.core.connections.ConnectionConfig
+import org.atoriapps.takina.core.connections.ConnectionDefaults
 import org.atoriapps.takina.core.connections.ConnectionState
 import org.atoriapps.takina.core.connections.ConnectionStateMachine
 import org.atoriapps.takina.core.connections.FinalReconnect
 import org.atoriapps.takina.core.connections.ReconnectPolicy
+import org.atoriapps.takina.core.connections.ReconnectDefaults
+import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
@@ -68,7 +71,6 @@ import org.atoriapps.takina.core.request.RequestExecutor
 import org.atoriapps.takina.core.request.TakinaRequestApi
 import org.atoriapps.takina.core.models.TakinaResult
 import org.atoriapps.takina.core.runtime.TakinaRuntime
-import org.atoriapps.takina.core.utils.ParsingUtils.asStringListOrNull
 import org.atoriapps.takina.core.utils.ParsingUtils.toBareJidOrNull
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlWriter
@@ -92,6 +94,7 @@ interface Takina {
     fun capabilities(init: CapabilityDsl.() -> Unit)
     fun configs(init: ConfigDsl.() -> Unit)
     fun addAccount(init: AccountDsl.() -> Unit)
+
     // TODO、CHECK：addAccount要不要接受通过AccountContext（也就是Re-Add）？
     fun removeAccount(jid: BareJid)
     fun removeAccount(accountContext: AccountContext) = removeAccount(accountContext.owner)
@@ -289,7 +292,6 @@ internal class CoreTakina(
 
         val account = requireNotNull(accounts[jid]) { "Account not found: $jid" }
         val machine = requireNotNull(stateMachines[jid]) { "State machine not found: $jid" }
-        val accountScope = Scope.Account(jid)
 
         if (machine.currentState() == ConnectionState.ESTABLISHED) {
             runtime.setAccountState(jid, AccountState.ONLINE)
@@ -302,7 +304,7 @@ internal class CoreTakina(
         controlPlane.onNextConnectionBoundary()
 
         val transport = XmppTransportFactoryRegistry.factory(
-            account.getConnectionConfig(accountScope),
+            account.getConnectionConfig(),
             transportCallbacksFor(jid),
         )
 
@@ -445,24 +447,27 @@ internal class CoreTakina(
 
     internal fun applyConfig(path: String, value: Any?, scope: Scope, accountOwner: BareJid?) {
         val result = controlPlane.applyConfig(path, value, scope)
+        val eventPath = result.path
 
         when {
-            result.rejectedReason != null -> events.emit(ConfigRejectedEvent(path, result.rejectedReason))
-            result.applied -> events.emit(ConfigAppliedEvent(path, result.applyMode.name))
-            else -> events.emit(ConfigApplyDeferredEvent(path, result.applyMode.name))
+            result.rejectedReason != null -> events.emit(ConfigRejectedEvent(eventPath, result.rejectedReason))
+            result.applied -> events.emit(ConfigAppliedEvent(eventPath, result.applyMode.name))
+            else -> events.emit(ConfigApplyDeferredEvent(eventPath, result.applyMode.name))
         }
 
         when (scope) {
-            Scope.Global, Scope.Preset -> events.emit(GlobalConfigChangedEvent(path))
+            Scope.Global, Scope.Preset -> events.emit(GlobalConfigChangedEvent(eventPath))
 
-            is Scope.Account -> events.emit(AccountConfigChangedEvent(scope.owner, path))
+            is Scope.Account -> events.emit(AccountConfigChangedEvent(scope.owner, eventPath))
 
-            is Scope.Conversation -> events.emit(AccountConfigChangedEvent(scope.owner, path))
+            is Scope.Conversation -> events.emit(AccountConfigChangedEvent(scope.owner, eventPath))
 
-            is Scope.Message -> events.emit(AccountConfigChangedEvent(scope.owner, path))
+            is Scope.Message -> events.emit(AccountConfigChangedEvent(scope.owner, eventPath))
         }
 
-        if (accountOwner != null && scope !is Scope.Account && scope !is Scope.Conversation && scope !is Scope.Message) events.emit(AccountConfigChangedEvent(accountOwner, path))
+        if (accountOwner != null && scope !is Scope.Account && scope !is Scope.Conversation && scope !is Scope.Message) {
+            events.emit(AccountConfigChangedEvent(accountOwner, eventPath))
+        }
     }
 
     suspend fun onUnexpectedDisconnect(owner: BareJid, reason: String?, authHardFailure: Boolean) {
@@ -475,22 +480,19 @@ internal class CoreTakina(
         val finalReconnect = FinalReconnect(
             onSchedule = { attempt, delay ->
                 runtime.setAccountState(owner, AccountState.RECONNECTING)
-                if (machine.currentState() != ConnectionState.RECONNECT_WAIT) {
-                    transition(owner, machine, ConnectionState.RECONNECT_WAIT)
-                }
+                if (machine.currentState() != ConnectionState.RECONNECT_WAIT) transition(owner, machine, ConnectionState.RECONNECT_WAIT)
                 events.emit(ReconnectScheduledEvent(owner, attempt, delay))
-            },
-            connectAttempt = {
+            }, connectAttempt = {
                 runCatching { connect(owner) }.isSuccess
             }
         )
 
         val policy = ReconnectPolicy(
-            enabled = controlPlane.currentConfig("reconnect.enabled", Scope.Account(owner)) as? Boolean ?: true,
-            delayMillis = controlPlane.currentConfig("reconnect.delay", Scope.Account(owner)) as? Long ?: 1_000L,
-            factor = controlPlane.currentConfig("reconnect.factor", Scope.Account(owner)) as? Double ?: 2.0,
-            jitter = controlPlane.currentConfig("reconnect.jitter", Scope.Account(owner)) as? Double ?: 0.0,
-            maxAttempts = controlPlane.currentConfig("reconnect.maxAttempts", Scope.Account(owner)) as? Int ?: 5,
+            enabled = controlPlane.currentConfig(ReconnectConfigPaths.ENABLED, Scope.Account(owner)) as? Boolean ?: ReconnectDefaults.ENABLED,
+            delayMillis = controlPlane.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)) as? Long ?: ReconnectDefaults.DELAY_MILLIS,
+            factor = controlPlane.currentConfig(ReconnectConfigPaths.FACTOR, Scope.Account(owner)) as? Double ?: ReconnectDefaults.FACTOR,
+            jitter = controlPlane.currentConfig(ReconnectConfigPaths.JITTER, Scope.Account(owner)) as? Double ?: ReconnectDefaults.JITTER,
+            maxAttempts = controlPlane.currentConfig(ReconnectConfigPaths.MAX_ATTEMPTS, Scope.Account(owner)) as? Int ?: ReconnectDefaults.MAX_ATTEMPTS,
         )
 
         val outcome = finalReconnect.perform(owner, policy, authHardFailure = authHardFailure)
@@ -613,14 +615,14 @@ internal class CoreTakina(
         throw IllegalStateException(error.message)
     }
 
-    // CHECK：这里有点硬编码，可能要提取独立
     private fun applyConfigPreset(configPreset: ConfigPreset) {
         when (configPreset) {
             ConfigPreset.Default -> {
-                controlPlane.applyConfig("reconnect.enabled", true, Scope.Preset)
-                controlPlane.applyConfig("reconnect.delay", 1_000L, Scope.Preset)
-                controlPlane.applyConfig("reconnect.factor", 2.0, Scope.Preset)
-                controlPlane.applyConfig("reconnect.maxAttempts", 5, Scope.Preset)
+                controlPlane.applyConfig(ReconnectConfigPaths.ENABLED, ReconnectDefaults.ENABLED, Scope.Preset)
+                controlPlane.applyConfig(ReconnectConfigPaths.DELAY, ReconnectDefaults.DELAY_MILLIS, Scope.Preset)
+                controlPlane.applyConfig(ReconnectConfigPaths.FACTOR, ReconnectDefaults.FACTOR, Scope.Preset)
+                controlPlane.applyConfig(ReconnectConfigPaths.JITTER, ReconnectDefaults.JITTER, Scope.Preset)
+                controlPlane.applyConfig(ReconnectConfigPaths.MAX_ATTEMPTS, ReconnectDefaults.MAX_ATTEMPTS, Scope.Preset)
             }
         }
     }
@@ -643,24 +645,17 @@ internal class CoreTakina(
 
     private fun ensureStarted() = check(started && !shutdown) { "Takina is not active" }
 
-    private fun AccountDefinition.getConnectionConfig(scope: Scope): ConnectionConfig {
-        val hostOverride = controlPlane.currentConfig("connection.host", scope) as? String
-        val portOverride = (controlPlane.currentConfig("connection.port", scope) as? Number)?.toInt()
-        val securityOverride = controlPlane.currentConfig("securityMode", scope) as? SecurityMode
-        val resourceOverride = controlPlane.currentConfig("resource", scope)?.toString()
-        val saslOverride = controlPlane.currentConfig("auth.sasl", scope).asStringListOrNull()
-        val timeoutOverride = (controlPlane.currentConfig("timeout.handshake", scope) as? Number)?.toInt()
-
-        val mode = securityOverride ?: securityMode ?: SecurityMode.START_TLS
+    private fun AccountDefinition.getConnectionConfig(): ConnectionConfig {
+        val mode = securityMode ?: ConnectionDefaults.SECURITY_MODE
 
         return ConnectionConfig(
             owner = jid,
-            host = hostOverride ?: connectionHost ?: jid.domain,
-            port = portOverride ?: connectionPort ?: mode.defaultPort,
+            host = connectionHost ?: jid.domain,
+            port = connectionPort ?: mode.defaultPort,
             securityMode = mode,
-            resource = resourceOverride ?: resource,
-            saslMechanisms = saslOverride ?: saslMechanisms,
-            connectTimeoutMillis = timeoutOverride ?: connectTimeoutMillis,
+            resource = resource,
+            saslMechanisms = saslMechanisms,
+            connectTimeoutMillis = connectTimeoutMillis,
             trustAllCertificates = trustAllCertificates,
         )
     }

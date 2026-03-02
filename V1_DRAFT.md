@@ -71,7 +71,7 @@ API简明实用，库开箱即用
 - Feature: 统一扩展单元
 - Capability: Feature 的能力开关语义
 - Node: Pipeline 执行节点
-- Control Plane: 能力与开关求值层
+- Control Plane: 能力与开关求值层。TODO：或改名UniManagement？讨论讨论
 - Execution Plane: 节点执行层
 - Scope: 配置作用域
 - Owner: 会话户主账号

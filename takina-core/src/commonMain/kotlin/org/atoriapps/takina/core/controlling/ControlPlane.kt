@@ -1,6 +1,7 @@
 package org.atoriapps.takina.core.controlling
 
-import org.atoriapps.takina.core.connections.SecurityMode
+import org.atoriapps.takina.core.connections.ConnectionConfigPaths
+import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.features.FeatureRegistry
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
@@ -33,13 +34,15 @@ class ControlPlane(
     private val featureRegistry: FeatureRegistry,
     private val configMetaCatalog: Map<String, ConfigMeta> = CoreConfigMetaCatalog.all,
 ) {
+    private data object UnsetMarker
+
     private val featureToggles = mutableMapOf<TakinaFeatureProvider<*>, MutableMap<Scope, Boolean>>()
     private val nodeToggles = mutableMapOf<String, MutableMap<Scope, Boolean>>()
     private val nodeOrders = mutableMapOf<String, MutableMap<Scope, Int>>()
 
-    private val activeConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
-    private val nextItemConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
-    private val nextConnectionConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
+    private val activeConfig = mutableMapOf<String, MutableMap<Scope, Any>>()
+    private val nextItemConfig = mutableMapOf<String, MutableMap<Scope, Any>>()
+    private val nextConnectionConfig = mutableMapOf<String, MutableMap<Scope, Any>>()
 
     fun setFeatureEnabled(provider: TakinaFeatureProvider<*>, scope: Scope, enabled: Boolean, ) {
         featureToggles.getOrPut(provider) { linkedMapOf() }[scope] = enabled
@@ -53,7 +56,16 @@ class ControlPlane(
         nodeOrders.getOrPut(nodeKey) { linkedMapOf() }[scope] = order
     }
 
+    // CHECK：NULL遮蔽，tmd都怪无UNDEFINED，记得检查
     fun applyConfig(path: String, value: Any?, scope: Scope = Scope.Global): ConfigChangeResult {
+        // CHECK：确保只阻止用户设定，不阻止内部合并（有的话）
+        if (ConnectionConfigPaths.isConnectionPath(path)) return ConfigChangeResult(
+            path = path,
+            applied = false,
+            applyMode = ApplyMode.BUILD_TIME_IMMUTABLE,
+            rejectedReason = "$path is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
+        )
+
         val meta = configMetaCatalog[path] ?: ConfigMeta(path, ApplyMode.IMMEDIATE, mutable = true)
 
         validateValue(path, value)?.let { reason ->
@@ -74,17 +86,18 @@ class ControlPlane(
 
         return when (meta.applyMode) {
             ApplyMode.IMMEDIATE -> {
-                activeConfig.setScoped(path, scope, value)
+                if (value == null) activeConfig.unsetScoped(path, scope)
+                else activeConfig.setScoped(path, scope, value)
                 ConfigChangeResult(path = path, applied = true, applyMode = meta.applyMode)
             }
 
             ApplyMode.NEXT_ITEM -> {
-                nextItemConfig.setScoped(path, scope, value)
+                nextItemConfig.setScoped(path, scope, value ?: UnsetMarker)
                 ConfigChangeResult(path = path, applied = false, applyMode = meta.applyMode)
             }
 
             ApplyMode.NEXT_CONNECTION -> {
-                nextConnectionConfig.setScoped(path, scope, value)
+                nextConnectionConfig.setScoped(path, scope, value ?: UnsetMarker)
                 ConfigChangeResult(path = path, applied = false, applyMode = meta.applyMode)
             }
         }
@@ -104,7 +117,11 @@ class ControlPlane(
 
     fun currentConfig(path: String, scope: Scope = Scope.Global): Any? {
         val values = activeConfig[path] ?: return null
-        for (candidate in scope.fallbackChain()) if (candidate in values) return values[candidate]
+        for (candidate in scope.fallbackChain()) {
+            val value = values[candidate] ?: continue
+            if (value === UnsetMarker) continue
+            return value
+        }
         return null
     }
 
@@ -256,19 +273,33 @@ class ControlPlane(
         )
     }
 
-    private fun MutableMap<String, MutableMap<Scope, Any?>>.setScoped(path: String, scope: Scope, value: Any?) {
+    private fun MutableMap<String, MutableMap<Scope, Any>>.setScoped(path: String, scope: Scope, value: Any) {
         getOrPut(path) { linkedMapOf() }[scope] = value
     }
 
+    private fun MutableMap<String, MutableMap<Scope, Any>>.unsetScoped(path: String, scope: Scope) {
+        val scoped = this[path] ?: return
+        scoped.remove(scope)
+        if (scoped.isEmpty()) remove(path)
+    }
+
     private fun validateValue(path: String, value: Any?): String? = when (path) {
-        "securityMode" -> if (value == null || value is SecurityMode) null else "securityMode must be SecurityMode enum"
+        ReconnectConfigPaths.ENABLED -> if (value == null || value is Boolean) null else "${ReconnectConfigPaths.ENABLED} must be Boolean"
+        ReconnectConfigPaths.DELAY -> if (value == null || (value is Number && value.toLong() >= 0L)) null else "${ReconnectConfigPaths.DELAY} must be Number >= 0"
+        ReconnectConfigPaths.FACTOR -> if (value == null || (value is Number && value.toDouble() > 0.0)) null else "${ReconnectConfigPaths.FACTOR} must be Number > 0"
+        ReconnectConfigPaths.JITTER -> if (value == null || (value is Number && value.toDouble() >= 0.0 && value.toDouble() <= 1.0)) null else "${ReconnectConfigPaths.JITTER} must be Number in [0, 1]"
+        ReconnectConfigPaths.MAX_ATTEMPTS -> if (value == null || (value is Number && value.toInt() >= 0)) null else "${ReconnectConfigPaths.MAX_ATTEMPTS} must be Number >= 0"
         else -> null
     }
 
-    private fun mergeScopedConfig(from: Map<String, MutableMap<Scope, Any?>>, into: MutableMap<String, MutableMap<Scope, Any?>>, ) {
+    private fun mergeScopedConfig(from: Map<String, MutableMap<Scope, Any>>, into: MutableMap<String, MutableMap<Scope, Any>>, ) {
         for ((path, scoped) in from) {
             val target = into.getOrPut(path) { linkedMapOf() }
-            target.putAll(scoped)
+            for ((scope, value) in scoped) {
+                if (value === UnsetMarker) target.remove(scope)
+                else target[scope] = value
+            }
+            if (target.isEmpty()) into.remove(path)
         }
     }
 }

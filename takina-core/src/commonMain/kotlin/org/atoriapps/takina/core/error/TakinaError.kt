@@ -1,6 +1,6 @@
 package org.atoriapps.takina.core.error
 
-// TODO、CHECK：何意味这个错误系统，感觉也怪怪的
+// TODO、CHECK：何意味这个错误系统，感觉也怪怪的。错误该标准化，规范下：错误形制，什么时候抛，抛了怎么让用户处理（try-catch/result branch）
 
 enum class ErrorDomain {
     TRANSPORT,

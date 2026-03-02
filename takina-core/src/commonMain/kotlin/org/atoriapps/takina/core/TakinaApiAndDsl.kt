@@ -1,6 +1,9 @@
 package org.atoriapps.takina.core
 
+import org.atoriapps.takina.core.connections.ConnectionConfigPaths
+import org.atoriapps.takina.core.connections.ConnectionDefaults
 import org.atoriapps.takina.core.connections.SecurityMode
+import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.features.InstalledFeature
 import org.atoriapps.takina.core.features.TakinaFeature
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
@@ -23,10 +26,10 @@ data class AccountDefinition(
     val connectionHost: String? = null,
     val connectionPort: Int? = null,
     val securityMode: SecurityMode? = null,
-    val resource: String = "takina",
-    val saslMechanisms: List<String> = listOf("SCRAM-SHA-256", "SCRAM-SHA-1", "DIGEST-MD5", "PLAIN"),
-    val connectTimeoutMillis: Int = 10_000,
-    val trustAllCertificates: Boolean = false,
+    val resource: String = ConnectionDefaults.RESOURCE,
+    val saslMechanisms: List<String> = ConnectionDefaults.SASL_MECHANISMS,
+    val connectTimeoutMillis: Int = ConnectionDefaults.CONNECT_TIMEOUT_MILLIS,
+    val trustAllCertificates: Boolean = ConnectionDefaults.TRUST_ALL_CERTIFICATES,
 )
 
 internal data class NodePolicyDraft(
@@ -145,10 +148,10 @@ class AccountDsl {
     private var host: String? = null
     private var port: Int? = null
     private var securityMode: SecurityMode? = null
-    private var trustAllCertificates: Boolean = false
-    private var resourceProvider: (() -> String)? = { "takina" }
-    private var saslMechanismsProvider: (() -> List<String>)? = { listOf("SCRAM-SHA-256", "SCRAM-SHA-1", "DIGEST-MD5", "PLAIN") }
-    private var connectTimeoutMillisProvider: (() -> Int)? = { 10_000 }
+    private var trustAllCertificates: Boolean = ConnectionDefaults.TRUST_ALL_CERTIFICATES
+    private var resourceProvider: (() -> String)? = { ConnectionDefaults.RESOURCE }
+    private var saslMechanismsProvider: (() -> List<String>)? = { ConnectionDefaults.SASL_MECHANISMS }
+    private var connectTimeoutMillisProvider: (() -> Int)? = { ConnectionDefaults.CONNECT_TIMEOUT_MILLIS }
     private val accountCapabilityDrafts = mutableListOf<PendingCapabilityDraft>()
     private val accountConfigDrafts = mutableListOf<PendingConfigDraft>()
     private val accountNodePolicyDrafts = mutableListOf<PendingNodePolicyDraft>()
@@ -182,18 +185,18 @@ class AccountDsl {
         host = built.host
         port = built.port
         securityMode = built.securityMode
-        trustAllCertificates = built.trustAllCertificates ?: false
+        trustAllCertificates = built.trustAllCertificates ?: ConnectionDefaults.TRUST_ALL_CERTIFICATES
         built.saslMechanisms?.let { saslMechanisms = it }
     }
 
     var resource: String
-        get() = resourceProvider?.invoke() ?: "takina"
+        get() = resourceProvider?.invoke() ?: ConnectionDefaults.RESOURCE
         set(value) {
             resourceProvider = { value }
         }
 
     var connectTimeoutMillis: Int
-        get() = connectTimeoutMillisProvider?.invoke() ?: 10_000
+        get() = connectTimeoutMillisProvider?.invoke() ?: ConnectionDefaults.CONNECT_TIMEOUT_MILLIS
         set(value) {
             connectTimeoutMillisProvider = { value }
         }
@@ -367,15 +370,18 @@ class ConfigDsl internal constructor(
     private val sink: (path: String, value: Any?, scope: Scope?) -> Unit,
     private val normalizeScope: (Scope) -> Scope = { it },
 ) {
-    fun set(path: String, value: Any?, scope: Scope? = null) = sink(path, value, scope?.let(normalizeScope))
+    fun set(path: String, value: Any?, scope: Scope? = null) {
+        require(!ConnectionConfigPaths.isConnectionPath(path)) { "$path is account-definition-only. Configure it via addAccount { connection { ... } } or account properties." }
+        sink(path, value, scope?.let(normalizeScope))
+    }
 
     fun reconnect(init: ReconnectDsl.() -> Unit) {
         val dsl = ReconnectDsl().apply(init)
-        dsl.enabled?.let { set("reconnect.enabled", it) }
-        dsl.delayMillis?.let { set("reconnect.delay", it) }
-        dsl.factor?.let { set("reconnect.factor", it) }
-        dsl.jitter?.let { set("reconnect.jitter", it) }
-        dsl.maxAttempts?.let { set("reconnect.maxAttempts", it) }
+        dsl.enabled?.let { set(ReconnectConfigPaths.ENABLED, it) }
+        dsl.delayMillis?.let { set(ReconnectConfigPaths.DELAY, it) }
+        dsl.factor?.let { set(ReconnectConfigPaths.FACTOR, it) }
+        dsl.jitter?.let { set(ReconnectConfigPaths.JITTER, it) }
+        dsl.maxAttempts?.let { set(ReconnectConfigPaths.MAX_ATTEMPTS, it) }
     }
 
     fun observability(init: ObservabilityDsl.() -> Unit) {

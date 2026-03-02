@@ -30,7 +30,7 @@ class DslProviderStyleTest {
                     trustAllCertificates = false
                 }
             }
-            config {
+            configs {
                 reconnect {
                     enabled { true }
                     delayMillis = 100L

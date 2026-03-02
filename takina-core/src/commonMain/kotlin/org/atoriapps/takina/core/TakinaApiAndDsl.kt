@@ -53,6 +53,32 @@ internal data class ConfigDraft(
     val scope: Scope,
 )
 
+internal data class AccountDraft(
+    val definition: AccountDefinition,
+    val capabilityDrafts: List<CapabilityDraft>,
+    val configDrafts: List<ConfigDraft>,
+    val nodePolicyDrafts: List<NodePolicyDraft>,
+)
+
+private data class PendingCapabilityDraft(
+    val featureProvider: TakinaFeatureProvider<*>,
+    val scope: Scope?,
+    val enabled: Boolean,
+)
+
+private data class PendingConfigDraft(
+    val path: String,
+    val value: Any?,
+    val scope: Scope?,
+)
+
+internal data class PendingNodePolicyDraft(
+    val nodeKey: String,
+    val scope: Scope?,
+    val enabled: Boolean? = null,
+    val order: Int? = null,
+)
+
 @TakinaDsl
 class TakinaConfiguration internal constructor() {
     internal val accounts = linkedMapOf<BareJid, AccountDefinition>()
@@ -64,7 +90,10 @@ class TakinaConfiguration internal constructor() {
 
     fun addAccount(init: AccountDsl.() -> Unit) {
         val built = AccountDsl().apply(init).build()
-        require(accounts.putIfAbsent(built.jid, built) == null) { "Duplicate account: ${built.jid}" }
+        require(accounts.putIfAbsent(built.definition.jid, built.definition) == null) { "Duplicate account: ${built.definition.jid}" }
+        capabilityDrafts += built.capabilityDrafts
+        configDrafts += built.configDrafts
+        nodePolicyDrafts += built.nodePolicyDrafts
     }
 
     // TIPS：这个（功能的安装和配置）只能全局
@@ -72,21 +101,27 @@ class TakinaConfiguration internal constructor() {
         FeaturesDsl(features, featureConfigureDrafts).apply(init)
     }
 
-    // CHECK aft 260302：好像不对，能力不是按作用域控制功能的开关吗
-    fun capability(init: CapabilityDsl.() -> Unit) {
-        CapabilityDsl { provider, scope, enabled ->
-            capabilityDrafts += CapabilityDraft(provider, scope, enabled)
-        }.apply(init)
+    fun capabilities(init: CapabilityDsl.() -> Unit) {
+        CapabilityDsl(sink = { provider, scope, enabled ->
+            capabilityDrafts += CapabilityDraft(provider, scope ?: Scope.Global, enabled)
+        }).apply(init)
     }
 
-    fun config(init: ConfigDsl.() -> Unit) {
-        ConfigDsl(Scope.Global) { path, value, scope ->
-            configDrafts += ConfigDraft(path = path, value = value, scope = scope)
-        }.apply(init)
+    fun configs(init: ConfigDsl.() -> Unit) {
+        ConfigDsl(sink = { path, value, scope ->
+            configDrafts += ConfigDraft(path, value, scope ?: Scope.Global)
+        }).apply(init)
     }
 
-    fun pipeline(init: PipelinePolicyDsl.() -> Unit) {
-        PipelinePolicyDsl { draft -> nodePolicyDrafts += draft }.apply(init)
+    fun pipelines(init: PipelinePolicyDsl.() -> Unit) {
+        PipelinePolicyDsl(sink = { draft ->
+            nodePolicyDrafts += NodePolicyDraft(
+                nodeKey = draft.nodeKey,
+                scope = draft.scope ?: Scope.Global,
+                enabled = draft.enabled,
+                order = draft.order,
+            )
+        }).apply(init)
     }
 }
 
@@ -114,6 +149,9 @@ class AccountDsl {
     private var resourceProvider: (() -> String)? = { "takina" }
     private var saslMechanismsProvider: (() -> List<String>)? = { listOf("SCRAM-SHA-256", "SCRAM-SHA-1", "DIGEST-MD5", "PLAIN") }
     private var connectTimeoutMillisProvider: (() -> Int)? = { 10_000 }
+    private val accountCapabilityDrafts = mutableListOf<PendingCapabilityDraft>()
+    private val accountConfigDrafts = mutableListOf<PendingConfigDraft>()
+    private val accountNodePolicyDrafts = mutableListOf<PendingNodePolicyDraft>()
 
     fun jid(provider: () -> BareJid?) {
         jidProvider = provider
@@ -166,11 +204,27 @@ class AccountDsl {
             saslMechanismsProvider = { value }
         }
 
-    // TODO：账号粒度的cfg的快捷配置呢？
+    fun capabilities(init: CapabilityDsl.() -> Unit) {
+        CapabilityDsl(sink = { provider, scope, enabled ->
+            accountCapabilityDrafts += PendingCapabilityDraft(provider, scope, enabled)
+        }).apply(init)
+    }
 
-    internal fun build(): AccountDefinition {
+    fun configs(init: ConfigDsl.() -> Unit) {
+        ConfigDsl(sink = { path, value, scope ->
+            accountConfigDrafts += PendingConfigDraft(path = path, value = value, scope = scope)
+        }).apply(init)
+    }
+
+    fun pipelines(init: PipelinePolicyDsl.() -> Unit) {
+        PipelinePolicyDsl(sink = { draft ->
+            accountNodePolicyDrafts += draft
+        }).apply(init)
+    }
+
+    internal fun build(): AccountDraft {
         val resolvedPasswordProvider = requireNotNull(passwordProvider) { "Account password provider is required" }
-        return AccountDefinition(
+        val definition = AccountDefinition(
             jid = requireNotNull(jid) { "Account jid is required" },
             passwordProvider = { requireNotNull(resolvedPasswordProvider.invoke()) { "Account password cannot be null" } },
             connectionHost = host,
@@ -180,6 +234,32 @@ class AccountDsl {
             saslMechanisms = saslMechanisms,
             connectTimeoutMillis = connectTimeoutMillis,
             trustAllCertificates = trustAllCertificates,
+        )
+        val owner = definition.jid
+        return AccountDraft(
+            definition = definition,
+            capabilityDrafts = accountCapabilityDrafts.map { draft ->
+                CapabilityDraft(
+                    featureProvider = draft.featureProvider,
+                    scope = (draft.scope ?: Scope.Account(owner)).enforceAccountScope(owner, "addAccount.capability"),
+                    enabled = draft.enabled,
+                )
+            },
+            configDrafts = accountConfigDrafts.map { draft ->
+                ConfigDraft(
+                    path = draft.path,
+                    value = draft.value,
+                    scope = (draft.scope ?: Scope.Account(owner)).enforceAccountScope(owner, "addAccount.config"),
+                )
+            },
+            nodePolicyDrafts = accountNodePolicyDrafts.map { draft ->
+                NodePolicyDraft(
+                    nodeKey = draft.nodeKey,
+                    scope = (draft.scope ?: Scope.Account(owner)).enforceAccountScope(owner, "addAccount.pipelines"),
+                    enabled = draft.enabled,
+                    order = draft.order,
+                )
+            },
         )
     }
 }
@@ -273,18 +353,21 @@ class FeaturesDsl internal constructor(
 }
 
 @TakinaDsl
-class CapabilityDsl internal constructor(private val sink: (TakinaFeatureProvider<*>, Scope, Boolean) -> Unit ) {
-    fun enable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = sink(provider, scope, true)
+class CapabilityDsl internal constructor(
+    private val sink: (TakinaFeatureProvider<*>, Scope?, Boolean) -> Unit,
+    private val normalizeScope: (Scope) -> Scope = { it },
+) {
+    fun enable(provider: TakinaFeatureProvider<*>, scope: Scope? = null) = sink(provider, scope?.let(normalizeScope), true)
 
-    fun disable(provider: TakinaFeatureProvider<*>, scope: Scope = Scope.Global) = sink(provider, scope, false)
+    fun disable(provider: TakinaFeatureProvider<*>, scope: Scope? = null) = sink(provider, scope?.let(normalizeScope), false)
 }
 
 @TakinaDsl
 class ConfigDsl internal constructor(
-    private val defaultScope: Scope,
-    private val sink: (path: String, value: Any?, scope: Scope) -> Unit,
+    private val sink: (path: String, value: Any?, scope: Scope?) -> Unit,
+    private val normalizeScope: (Scope) -> Scope = { it },
 ) {
-    fun set(path: String, value: Any?, scope: Scope = defaultScope) = sink(path, value, scope)
+    fun set(path: String, value: Any?, scope: Scope? = null) = sink(path, value, scope?.let(normalizeScope))
 
     fun reconnect(init: ReconnectDsl.() -> Unit) {
         val dsl = ReconnectDsl().apply(init)
@@ -301,7 +384,26 @@ class ConfigDsl internal constructor(
         dsl.alertThreshold?.let { set("observability.alertThreshold", it) }
     }
 
-    // TODO：我加密呢？
+    // TODO：我加密呢？即文档里的encryptionDsl
+}
+
+internal fun Scope.enforceAccountScope(owner: BareJid, entry: String): Scope = when (this) {
+    Scope.Global, Scope.Preset -> throw IllegalArgumentException("$entry does not allow ${this.kind}. Maximum scope is ACCOUNT for owner=$owner")
+
+    is Scope.Account -> {
+        require(this.owner == owner) { "$entry scope owner mismatch: expected $owner, actual ${this.owner}" }
+        this
+    }
+
+    is Scope.Conversation -> {
+        require(this.owner == owner) { "$entry scope owner mismatch: expected $owner, actual ${this.owner}" }
+        this
+    }
+
+    is Scope.Message -> {
+        require(this.owner == owner) { "$entry scope owner mismatch: expected $owner, actual ${this.owner}" }
+        this
+    }
 }
 
 @TakinaDsl
@@ -391,17 +493,28 @@ class ObservabilityDsl {
 
 @TakinaDsl
 class PipelinePolicyDsl internal constructor(
-    private val sink: (NodePolicyDraft) -> Unit,
+    private val sink: (PendingNodePolicyDraft) -> Unit,
+    private val normalizeScope: (Scope) -> Scope = { it },
 ) {
-    fun inbound(init: DirectionPolicyDsl.() -> Unit) = DirectionPolicyDsl(sink).apply(init)
-    fun outbound(init: DirectionPolicyDsl.() -> Unit) = DirectionPolicyDsl(sink).apply(init)
+    fun inbound(init: DirectionPolicyDsl.() -> Unit) = DirectionPolicyDsl(sink, normalizeScope).apply(init)
+    fun outbound(init: DirectionPolicyDsl.() -> Unit) = DirectionPolicyDsl(sink, normalizeScope).apply(init)
 }
 
 @TakinaDsl
-class DirectionPolicyDsl internal constructor(private val sink: (NodePolicyDraft) -> Unit ) {
-    fun about(nodeKey: String, scope: Scope = Scope.Global, init: NodePolicyDsl.() -> Unit) {
+class DirectionPolicyDsl internal constructor(
+    private val sink: (PendingNodePolicyDraft) -> Unit,
+    private val normalizeScope: (Scope) -> Scope = { it },
+) {
+    fun about(nodeKey: String, scope: Scope? = null, init: NodePolicyDsl.() -> Unit) {
         val policy = NodePolicyDsl().apply(init)
-        sink(NodePolicyDraft(nodeKey = nodeKey, scope = scope, enabled = policy.enabled, order = policy.order))
+        sink(
+            PendingNodePolicyDraft(
+                nodeKey = nodeKey,
+                scope = scope?.let(normalizeScope),
+                enabled = policy.enabled,
+                order = policy.order,
+            ),
+        )
     }
 }
 

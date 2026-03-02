@@ -89,56 +89,63 @@ interface Takina {
     val runtime: TakinaRuntime
     val request: TakinaRequestApi
 
-    fun capability(init: CapabilityDsl.() -> Unit)
-    fun config(init: ConfigDsl.() -> Unit)
+    fun capabilities(init: CapabilityDsl.() -> Unit)
+    fun configs(init: ConfigDsl.() -> Unit)
     fun addAccount(init: AccountDsl.() -> Unit)
+    // TODO、CHECK：addAccount要不要接受通过AccountContext（也就是Re-Add）？
     fun removeAccount(jid: BareJid)
-    fun removeAccount(accountHandle: AccountHandle) = removeAccount(accountHandle.owner)
-    fun getAccountHandleFor(jid: BareJid): AccountHandle
+    fun removeAccount(accountContext: AccountContext) = removeAccount(accountContext.owner)
+    fun account(jid: BareJid): AccountContext
 
     fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
     fun <API : FeatureApi, FEATURE> apiOrNull(provider: TakinaFeatureProvider<FEATURE>): API? where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
 
     suspend fun connect(jid: BareJid)
-    suspend fun connect(accountHandle: AccountHandle) = connect(accountHandle.owner)
+    suspend fun connect(accountContext: AccountContext) = connect(accountContext.owner)
     suspend fun disconnect(jid: BareJid)
-    suspend fun disconnect(accountHandle: AccountHandle) = disconnect(accountHandle.owner)
+    suspend fun disconnect(accountContext: AccountContext) = disconnect(accountContext.owner)
     suspend fun connectAll()
     suspend fun disconnectAll()
     suspend fun shutdown()
 }
 
-class AccountHandle internal constructor(private val takina: CoreTakina, val owner: BareJid) {
+class AccountContext internal constructor(private val takina: CoreTakina, val owner: BareJid) {
     val request: TakinaRequestApi = TakinaRequestApi(takina, owner)
     val events: TakinaEventBus get() = takina.events
 
-    fun capability(init: CapabilityDsl.() -> Unit) {
-        CapabilityDsl { provider, scope, enabled ->
-            val resolvedScope = if (scope == Scope.Global) Scope.Account(owner) else scope
-            takina.applyCapability(provider, resolvedScope, enabled)
-        }.apply(init)
+    fun capabilities(init: CapabilityDsl.() -> Unit) {
+        CapabilityDsl(
+            sink = { provider, scope, enabled ->
+                val resolvedScope = (scope ?: Scope.Account(owner)).enforceAccountScope(owner, "account.capability")
+                takina.applyCapability(provider, resolvedScope, enabled)
+            },
+        ).apply(init)
     }
 
-    fun config(init: ConfigDsl.() -> Unit) {
-        ConfigDsl(Scope.Account(owner)) { path, value, scope ->
-            takina.applyConfig(path, value, scope, owner)
-        }.apply(init)
+    fun configs(init: ConfigDsl.() -> Unit) {
+        ConfigDsl(
+            sink = { path, value, scope ->
+                val resolvedScope = (scope ?: Scope.Account(owner)).enforceAccountScope(owner, "account.config")
+                takina.applyConfig(path, value, resolvedScope, owner)
+            },
+        ).apply(init)
     }
 
     suspend fun connect() = takina.connect(owner)
     suspend fun disconnect() = takina.disconnect(owner)
 
+    // CHECK：AccountContext是否该提供`api`入口
     fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> = takina.api(provider)
     fun <API : FeatureApi, FEATURE> apiOrNull(provider: TakinaFeatureProvider<FEATURE>): API? where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> = takina.apiOrNull(provider)
 
-    fun getDirectChatHandleFor(peer: BareJid): DirectChatHandle = DirectChatHandle(this, peer)
-    fun getMucHandleFor(room: BareJid): MucHandle = MucHandle(this, room)
+    fun chat(peer: BareJid): ChatContext = ChatContext(this, peer)
+    fun room(room: BareJid): RoomContext = RoomContext(this, room)
 
     // 账号失效（被移除）了怎么办
 }
 
-abstract class BaseConversationHandle internal constructor(
-    private val account: AccountHandle,
+abstract class BaseConversationContext internal constructor(
+    private val account: AccountContext,
     private val peer: BareJid
 ) {
     fun message(init: MessageRequestDsl.() -> Unit) = account.request.message {
@@ -148,11 +155,11 @@ abstract class BaseConversationHandle internal constructor(
 }
 
 // TODO：应再提供拉黑等方法，但能力由Feature提供，所以应该是扩展方法？
-class DirectChatHandle internal constructor(account: AccountHandle, peer: BareJid) : BaseConversationHandle(account, peer) {
+class ChatContext internal constructor(account: AccountContext, peer: BareJid) : BaseConversationContext(account, peer) {
 }
 
-// HACK：我觉得这个类应该由Feature作为扩展提供，或者是Feature注入扩展方法。因为Muc是Feature提供的。MucHandle应提供如join、leave的便捷方法
-class MucHandle internal constructor(account: AccountHandle, peer: BareJid) : BaseConversationHandle(account, peer) {
+// TODO、CHECK：我觉得这个类应该由Feature作为扩展提供（未来移走）。因为Muc是Feature提供的。RoomCtx应提供如join、leave的便捷方法
+class RoomContext internal constructor(account: AccountContext, peer: BareJid) : BaseConversationContext(account, peer) {
 }
 
 // TODO、CHECK：内部要不要拆，会不会太重？
@@ -200,12 +207,9 @@ internal class CoreTakina(
 
         // 应用配置
         applyConfigPreset(configPreset)
-        bootstrapConfiguration.configDrafts.forEach { applyConfig(it.path, it.value, it.scope, null) }
-        bootstrapConfiguration.capabilityDrafts.forEach { applyCapability(it.featureProvider, it.scope, it.enabled) }
-        bootstrapConfiguration.nodePolicyDrafts.forEach {
-            it.enabled?.let { enabled -> controlPlane.setNodeEnabled(it.nodeKey, it.scope, enabled) }
-            it.order?.let { order -> controlPlane.setNodeOrder(it.nodeKey, it.scope, order) }
-        }
+        bootstrapConfiguration.configDrafts.forEach { applyConfigDraft(it) }
+        bootstrapConfiguration.capabilityDrafts.forEach { applyCapabilityDraft(it) }
+        bootstrapConfiguration.nodePolicyDrafts.forEach { applyNodePolicyDraft(it) }
 
         // 安装账号
         bootstrapConfiguration.accounts.values.forEach { installAccount(it) }
@@ -217,19 +221,39 @@ internal class CoreTakina(
         events.emit(TakinaStartedEvent())
     }
 
-    override fun capability(init: CapabilityDsl.() -> Unit) {
+    override fun capabilities(init: CapabilityDsl.() -> Unit) {
         ensureStarted()
-        CapabilityDsl { provider, scope, enabled -> applyCapability(provider, scope, enabled) }.apply(init)
+        CapabilityDsl(sink = { provider, scope, enabled -> applyCapability(provider, scope ?: Scope.Global, enabled) }).apply(init)
     }
 
-    override fun config(init: ConfigDsl.() -> Unit) {
+    override fun configs(init: ConfigDsl.() -> Unit) {
         ensureStarted()
-        ConfigDsl(Scope.Global) { path, value, scope -> applyConfig(path, value, scope, null) }.apply(init)
+        ConfigDsl(sink = { path, value, scope -> applyConfig(path, value, scope ?: Scope.Global, null) }).apply(init)
     }
 
     override fun addAccount(init: AccountDsl.() -> Unit) {
         ensureStarted()
-        installAccount(AccountDsl().apply(init).build())
+        applyAccountDraft(AccountDsl().apply(init).build())
+    }
+
+    private fun applyAccountDraft(draft: AccountDraft) {
+        installAccount(draft.definition)
+        draft.capabilityDrafts.forEach { applyCapabilityDraft(it) }
+        draft.configDrafts.forEach { applyConfigDraft(it, draft.definition.jid) }
+        draft.nodePolicyDrafts.forEach { applyNodePolicyDraft(it) }
+    }
+
+    private fun applyCapabilityDraft(draft: CapabilityDraft) {
+        applyCapability(draft.featureProvider, draft.scope, draft.enabled)
+    }
+
+    private fun applyConfigDraft(draft: ConfigDraft, accountOwner: BareJid? = null) {
+        applyConfig(draft.path, draft.value, draft.scope, accountOwner)
+    }
+
+    private fun applyNodePolicyDraft(draft: NodePolicyDraft) {
+        draft.enabled?.let { enabled -> controlPlane.setNodeEnabled(draft.nodeKey, draft.scope, enabled) }
+        draft.order?.let { order -> controlPlane.setNodeOrder(draft.nodeKey, draft.scope, order) }
     }
 
     override fun removeAccount(jid: BareJid) {
@@ -245,11 +269,10 @@ internal class CoreTakina(
         events.emit(AccountRemovedEvent(jid))
     }
 
-    // TODO：HANDLE要不要换换名字？
-    override fun getAccountHandleFor(jid: BareJid): AccountHandle {
+    override fun account(jid: BareJid): AccountContext {
         ensureStarted()
         require(accounts.containsKey(jid)) { "Account not found: $jid" }
-        return AccountHandle(this, jid)
+        return AccountContext(this, jid)
     }
 
     override fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> =
@@ -602,10 +625,7 @@ internal class CoreTakina(
         }
     }
 
-    private fun applyFeatureConfigureDrafts(
-        installed: List<InstalledFeature>,
-        drafts: List<FeatureConfigureDraft>,
-    ) {
+    private fun applyFeatureConfigureDrafts(installed: List<InstalledFeature>, drafts: List<FeatureConfigureDraft>) {
         if (drafts.isEmpty()) return
         val installedByProvider = installed.associateBy { it.provider }
         drafts.forEach { draft ->

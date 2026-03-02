@@ -110,7 +110,7 @@ class CoreSemanticsTest {
         takina.events.on(ConfigApplyDeferredEvent::class) { deferred += 1 }
         takina.events.on(ConfigRejectedEvent::class) { rejected += 1 }
 
-        takina.config {
+        takina.configs {
             set("pipeline.businessInbound.enabled", false)
             set("features.installSet", "immutable")
         }
@@ -131,7 +131,7 @@ class CoreSemanticsTest {
             }
         }
 
-        takina.capability {
+        takina.capabilities {
             disable(DummyFeatureProvider, scope = Scope.Global)
             enable(DummyFeatureProvider, scope = Scope.Message(alice, bob, "m1"))
         }
@@ -157,7 +157,7 @@ class CoreSemanticsTest {
                     jid = alice
                     password = "secret"
                 }
-                config {
+                configs {
                     set("connection.host", "first.example.com", scope = Scope.Account(alice))
                 }
             }
@@ -165,7 +165,7 @@ class CoreSemanticsTest {
             takina.connect(alice)
             takina.disconnect(alice)
 
-            takina.config {
+            takina.configs {
                 set("connection.host", "second.example.com", scope = Scope.Account(alice))
             }
             takina.connect(alice)

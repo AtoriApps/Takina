@@ -87,10 +87,6 @@ class ControlPlane(
                 nextConnectionConfig.setScoped(path, scope, value)
                 ConfigChangeResult(path = path, applied = false, applyMode = meta.applyMode)
             }
-
-            ApplyMode.BUILD_TIME_IMMUTABLE -> {
-                ConfigChangeResult(path = path, applied = false, applyMode = meta.applyMode, rejectedReason = "Config is immutable")
-            }
         }
     }
 

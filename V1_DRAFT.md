@@ -466,26 +466,26 @@ takina/* or specific handle */.request.message {
 
 ---
 
-## 领域句柄规范
+## 领域上下文规范
 
-### AccountHandle
+### AccountContext
 
-`takina.forAccount(jid): AccountHandle`
+`takina.account(jid): AccountContext`
 
 作用
 
-- 带户主：预绑定 from
+- 带户主（owner）：预绑定 from
 - 承载账号粒度策略
 - 提供账号粒度监听与能力访问
 
-### 会话句柄
+### 会话上下文
 
-- `DirectChatHandle(owner, peer)`
-- `MucHandle(owner, room)`
+- `ChatContext(owner, peer)`
+- `RoomContext(owner, room)`
 
-同一 room/peer 在不同 owner 下是不同上下文
+同一 room/peer 在不同户主下是不同上下文
 
-会话句柄提供便捷API：
+会话上下文提供便捷API：
 
 ```kotlin
 dm.message{
@@ -497,15 +497,22 @@ room.message {} // 同上
 room.join {}
 ```
 
-### 句柄边界
+### 上下文边界
 
-句柄是 facade 与 context
+上下文是 facade 与 context
 
 不是独立状态机
 
 所有动作最终进入统一 request 与 pipeline runtime
 
-### 句柄配置生效
+上下文一致性规则（冻结）：
+
+- 核心思想：对象可以不同，但功效始终同
+- 对同一逻辑键（`owner + peer + kind`）创建的上下文，不要求引用同一，但请求路由、默认绑定（from/to）、错误语义必须一致
+- 账号不可用（含被 `removeAccount`）时，不销毁已获取的 bound context；后续调用按当前运行状态判定可否执行
+- 若账号后续重新可用（例如重新添加同一 owner），同一逻辑键的 context 继续按最新状态工作，无需强制重新取对象
+
+### 上下文配置生效
 
 执行 DSL 完成后按 applyMode 生效
 
@@ -529,12 +536,12 @@ room.join {}
 
 方法：
 
-- `takina.capability { ... }`
-- `takina.config { ... }`
+- `takina.capabilities { ... }`
+- `takina.configs { ... }`
 - `takina.addAccount { ... }`
 - `takina.removeAccount(jid)`
-- `takina.forAccount(jid): AccountHandle`
-- `suspend takina.connect(jid)` / `takina.connect(accountHandle)` 与对应的断连方法
+- `takina.account(jid): AccountContext`
+- `suspend takina.connect(jid)` / `takina.connect(accountContext)` 与对应的断连方法
 - `suspend takina.connectAll()` 与对应的断连方法
 - `takina.shutdown()`
 
@@ -565,13 +572,13 @@ room.join {}
 - 重试仅在 `retryable = true` 且重试策略允许时发生
 - `TakinaError` 仅提供错误分类信息，不提供动作型 `retry()`
 
-账号句柄的方法：
+账号上下文的方法：
 
-- `accountHandle.request`
-- `accountHandle.capability { ... }`
-- `accountHandle.config { ... }`
-- `suspend accountHandle.connect()`
-- `suspend accountHandle.disconnect()`
+- `accountContext.request`
+- `accountContext.capabilities { ... }`：最大作用域去到Account，不可Global，下同
+- `accountContext.configs { ... }`
+- `suspend accountContext.connect()`
+- `suspend accountContext.disconnect()`
 
 获取功能的 API：
 
@@ -674,8 +681,8 @@ suspend fun RegistrationApi.newSession(
 
 重连配置入口
 
-- `takina.config { reconnect { ... } }`（全局默认）
-- `takina.forAccount(jid).config { reconnect { ... } }`（账号覆盖）
+- `takina.configs { reconnect { ... } }`（全局默认）
+- `takina.account(jid).configs { reconnect { ... } }`（账号覆盖）
 
 ---
 
@@ -755,26 +762,26 @@ val takina = createTakina(
       // host、port、securityMode
     }
 
-    defaults {
+    configs {
       messageEncryption { provider = EncryptionProviders.None }
     }
 
-    // capability、pipeline
+    // capabilities、pipelines
   }
 
-  defaults {
+  configs {
     messageEncryption { provider = EncryptionProviders.omemo() }
     // 连接重试等策略
   }
 
   features { // 这个不可动态再搞
-    configure(StreamManagementFeature) { // 有安装才能config
+    configure(StreamManagementFeature) { // 最终有安装（包括预设的隐式安装）才能配置
       persistStateToStore = true
       restorePersistedStateOnStartup = true
     }
   }
 
-  capability {
+  capabilities {
     enable(OmemoFeature) // scope = Scope.Global
     disable(HttpUploadFeature, scope = Scope.account("alice@example.com".toBareJid()))
   }
@@ -789,8 +796,8 @@ val takina = createTakina(
   }
 }
 
-val alice = takina.forAccount("alice@example.com".toBareJid())
-val room = alice.muc("a@conference.example.com".toBareJid())
+val alice = takina.account("alice@example.com".toBareJid())
+val room = alice.room("a@conference.example.com".toBareJid())
 
 takina./* suspend fun */connectAll()
 
@@ -813,7 +820,7 @@ takina.runtime.connectionStates.collect { states ->
 val connectionSnapshot = takina.runtime.connectionStates.value
 println(connectionSnapshot)
 
-alice.capability/* or defaults, etc */ {} // 管理配置，对未来生效
+alice.capabilities/* or configs, etc */ {} // 管理配置，对未来生效
 
 // -- 使用能力 --
 
@@ -843,7 +850,7 @@ takina.registration.newSession {
 
     onSuccess = {
         promoteToAccount {
-            // config {} ...
+            // like what you do in addAccount
         }
     }
 }

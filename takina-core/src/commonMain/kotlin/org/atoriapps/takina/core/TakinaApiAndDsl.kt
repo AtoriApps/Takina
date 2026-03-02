@@ -390,7 +390,7 @@ class ConfigDsl internal constructor(
         dsl.alertThreshold?.let { set("observability.alertThreshold", it) }
     }
 
-    // TODO：我加密呢？即文档里的encryptionDsl
+    // TODO：我加密配置呢？即草案文档里的encryptionDsl
 }
 
 internal fun Scope.enforceAccountScope(owner: BareJid, entry: String): Scope = when (this) {

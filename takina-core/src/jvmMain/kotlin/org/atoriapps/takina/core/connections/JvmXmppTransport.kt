@@ -189,14 +189,9 @@ internal class JvmXmppTransport(
         }))
 
         val challengeFrame = readRequiredFrame("scram challenge")
-        val challengeNode = XmlParser.parseElementOrNull(challengeFrame)
-            ?: throw IllegalStateException("Unexpected non-xml SCRAM challenge: $challengeFrame")
-        if (challengeNode.localName == "failure") {
-            throw IllegalStateException("SASL auth failed via ${mechanism.mechanismName}: $challengeFrame")
-        }
-        if (challengeNode.localName != "challenge") {
-            throw IllegalStateException("Unexpected SCRAM frame via ${mechanism.mechanismName}: $challengeFrame")
-        }
+        val challengeNode = XmlParser.parseElementOrNull(challengeFrame) ?: throw IllegalStateException("Unexpected non-xml SCRAM challenge: $challengeFrame")
+        if (challengeNode.localName == "failure") throw IllegalStateException("SASL auth failed via ${mechanism.mechanismName}: $challengeFrame")
+        if (challengeNode.localName != "challenge") throw IllegalStateException("Unexpected SCRAM frame via ${mechanism.mechanismName}: $challengeFrame")
         val serverFirstB64 = challengeNode.textContent().trim()
         val serverFirst = String(Base64.getDecoder().decode(serverFirstB64), Charsets.UTF_8)
 
@@ -213,21 +208,20 @@ internal class JvmXmppTransport(
         }))
 
         val successFrame = readRequiredFrame("scram success")
-        val successNode = XmlParser.parseElementOrNull(successFrame)
-            ?: throw IllegalStateException("Unexpected non-xml SCRAM success frame: $successFrame")
+        val successNode = XmlParser.parseElementOrNull(successFrame) ?: throw IllegalStateException("Unexpected non-xml SCRAM success frame: $successFrame")
         when (successNode.localName) {
             "success" -> {
                 val successPayload = successNode.textContent().trim()
                 if (successPayload.isNotEmpty()) {
                     val decoded = String(Base64.getDecoder().decode(successPayload), Charsets.UTF_8)
                     val verifier = JvmScram.extractServerVerifier(decoded)
-                    if (verifier != null && !MessageDigest.isEqual(verifier.toByteArray(), final.expectedServerSignatureBase64.toByteArray())) {
+                    if (verifier != null && !MessageDigest.isEqual(verifier.toByteArray(), final.expectedServerSignatureBase64.toByteArray()))
                         throw IllegalStateException("SCRAM server signature verification failed")
-                    }
                 }
             }
 
             "failure" -> throw IllegalStateException("SASL auth failed via ${mechanism.mechanismName}: $successFrame")
+
             else -> throw IllegalStateException("Unexpected SCRAM final frame via ${mechanism.mechanismName}: $successFrame")
         }
     }
@@ -265,8 +259,7 @@ internal class JvmXmppTransport(
 
         while (true) {
             val frame = readRequiredFrame("sasl challenge or success")
-            val node = XmlParser.parseElementOrNull(frame)
-                ?: throw IllegalStateException("Unexpected non-xml SASL frame via $mechanism: $frame")
+            val node = XmlParser.parseElementOrNull(frame) ?: throw IllegalStateException("Unexpected non-xml SASL frame via $mechanism: $frame")
             when (node.localName) {
                 "challenge" -> {
                     val challengeRaw = node.textContent()

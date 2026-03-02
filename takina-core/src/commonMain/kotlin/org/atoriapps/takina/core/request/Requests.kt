@@ -15,9 +15,25 @@ data class MessageRequest(
 data class PresenceRequest(
     val from: BareJid?,
     val to: BareJid?,
-    val show: String? = null,
+    val show: PresenceShow? = null,
     val status: String? = null
 )
+
+sealed class PresenceShow(val wireValue: String) {
+    data object Away : PresenceShow("away")
+
+    data object Chat : PresenceShow("chat")
+
+    data object DoNotDisturb : PresenceShow("dnd")
+
+    data object ExtendedAway : PresenceShow("xa") // TIPS：长期离开，比离开更牛逼
+
+    data class Custom(val value: String) : PresenceShow(value) {
+        init {
+            require(value.isNotBlank()) { "`show` custom value cannot be blank" }
+        }
+    }
+}
 
 data class IqRequest(
     val from: BareJid?,
@@ -43,7 +59,9 @@ data class IqOutcome(
 
 interface RequestExecutor {
     suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome>
+
     suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome>
+
     suspend fun sendIq(request: IqRequest): TakinaResult<IqOutcome>
 }
 
@@ -99,7 +117,7 @@ class MessageRequestDsl {
 class PresenceRequestDsl {
     private var fromProvider: (() -> BareJid?)? = null
     private var toProvider: (() -> BareJid?)? = null
-    private var showProvider: (() -> String?)? = null
+    private var showProvider: (() -> PresenceShow?)? = null
     private var statusProvider: (() -> String?)? = null
 
     var from: BareJid?
@@ -116,7 +134,7 @@ class PresenceRequestDsl {
         }
 
     // TIPS：这是子状态，应为枚举：away、chat、dnd、xa，用户不设置本字段时，意味她可用
-    var show: String?
+    var show: PresenceShow?
         get() = showProvider?.invoke()
         set(value) {
             showProvider = { value }
@@ -136,7 +154,7 @@ class PresenceRequestDsl {
         toProvider = provider
     }
 
-    fun show(provider: () -> String?) {
+    fun show(provider: () -> PresenceShow?) {
         showProvider = provider
     }
 

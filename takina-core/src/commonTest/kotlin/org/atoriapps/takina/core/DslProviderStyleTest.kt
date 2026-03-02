@@ -9,6 +9,7 @@ import org.atoriapps.takina.core.models.toBareJid
 import org.atoriapps.takina.core.request.IqRequestDsl
 import org.atoriapps.takina.core.request.MessageRequestDsl
 import org.atoriapps.takina.core.request.PresenceRequestDsl
+import org.atoriapps.takina.core.request.PresenceShow
 
 class DslProviderStyleTest {
     private val alice = "alice@example.com".toBareJid()
@@ -60,10 +61,10 @@ class DslProviderStyleTest {
         val presence = PresenceRequestDsl().apply {
             from { alice }
             to { bob }
-            show { "chat" }
+            show { PresenceShow.Chat }
             status { "online" }
         }.build()
-        assertEquals("chat", presence.show)
+        assertEquals(PresenceShow.Chat, presence.show)
         assertEquals("online", presence.status)
 
         val iq = IqRequestDsl().apply {

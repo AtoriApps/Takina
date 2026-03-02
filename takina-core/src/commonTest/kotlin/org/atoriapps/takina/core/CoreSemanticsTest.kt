@@ -25,6 +25,7 @@ import org.atoriapps.takina.core.models.toBareJid
 import org.atoriapps.takina.core.pipeline.NodeResult
 import org.atoriapps.takina.core.pipeline.OutboundFrame
 import org.atoriapps.takina.core.pipeline.OutboundNode
+import org.atoriapps.takina.core.request.PresenceShow
 
 class CoreSemanticsTest {
     private val alice = "alice@example.com".toBareJid()
@@ -198,7 +199,7 @@ class CoreSemanticsTest {
 
             takina.connect(alice)
             takina.request.message { to = bob; body = "m" }.send()
-            takina.request.presence { to = bob; show = "chat" }.send()
+            takina.request.presence { to = bob; show = PresenceShow.Chat }.send()
             takina.request.iq { to = bob; type = "get"; payload = "<ping/>" }.send()
 
             assertEquals(3, sent.size)

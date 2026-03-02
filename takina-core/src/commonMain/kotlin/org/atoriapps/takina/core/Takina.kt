@@ -352,7 +352,7 @@ internal class CoreTakina(
         events.emit(TakinaShutdownCompletedEvent())
     }
 
-    // HACK：不应该这么简单地在这里构建吧，没准未来解耦？
+    // HACK：这几个是不是不建议在这里构建吧，没准未来解耦？
     override suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome> {
         ensureStarted()
 
@@ -390,9 +390,9 @@ internal class CoreTakina(
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
         val raw = XmlWriter.render(xml("presence") {
-            attr("to", request.to?.toString())
+            request.to?.let { attr("to", it.toString()) }
             attr("from", transport.boundJid)
-            request.show?.let { element("show") { text(it) } }
+            request.show?.let { element("show") { text(it.wireValue) } }
             request.status?.let { element("status") { text(it) } }
         })
 

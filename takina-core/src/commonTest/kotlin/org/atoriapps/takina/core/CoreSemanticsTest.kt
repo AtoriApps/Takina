@@ -1,6 +1,13 @@
 package org.atoriapps.takina.core
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -8,6 +15,8 @@ import kotlin.test.assertTrue
 import org.atoriapps.takina.core.connections.AccountState
 import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.connections.XmppConnectPhase
+import org.atoriapps.takina.core.connections.XmppSession
 import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
@@ -55,32 +64,21 @@ class CoreSemanticsTest {
 
     private class RecordingTransport(
         private val config: ConnectionConfig,
-        private val callbacks: XmppTransportCallbacks,
         private val sentSink: MutableList<String>,
     ) : XmppTransport {
-        override var boundJid: String? = null
-        private var connected = false
-        override val isConnected: Boolean get() = connected
-
-        override suspend fun connect(password: String) {
-            callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
-            callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
-            callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
-            callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
-            boundJid = "${config.owner}/${config.resource}"
-            connected = true
-            callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+            onPhase(XmppConnectPhase.TCP_CONNECTING)
+            onPhase(XmppConnectPhase.STREAM_OPENING)
+            onPhase(XmppConnectPhase.AUTHENTICATING)
+            onPhase(XmppConnectPhase.BINDING_RESOURCE)
+            return XmppSession("${config.owner}/${config.resource}")
         }
 
         override suspend fun sendRaw(xml: String) {
             sentSink += xml
         }
 
-        override suspend fun disconnect() {
-            connected = false
-            boundJid = null
-            callbacks.onStateChanged(ConnectionState.CLOSED)
-        }
+        override suspend fun disconnect() = Unit
     }
 
     private class MarkerOutboundFeature : TakinaFeature {
@@ -117,32 +115,19 @@ class CoreSemanticsTest {
         private val config: ConnectionConfig,
         private val callbacks: XmppTransportCallbacks,
     ) : XmppTransport {
-        override var boundJid: String? = null
-        private var connected = false
-        override val isConnected: Boolean get() = connected
-
-        override suspend fun connect(password: String) {
-            callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
-            callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
-            callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
-            callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
-            boundJid = "${config.owner}/${config.resource}"
-            connected = true
-            callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+            onPhase(XmppConnectPhase.TCP_CONNECTING)
+            onPhase(XmppConnectPhase.STREAM_OPENING)
+            onPhase(XmppConnectPhase.AUTHENTICATING)
+            onPhase(XmppConnectPhase.BINDING_RESOURCE)
+            return XmppSession("${config.owner}/${config.resource}")
         }
 
         override suspend fun sendRaw(xml: String) = Unit
 
-        override suspend fun disconnect() {
-            connected = false
-            boundJid = null
-            callbacks.onStateChanged(ConnectionState.CLOSED)
-        }
+        override suspend fun disconnect() = Unit
 
         suspend fun closeUnexpectedly(authHardFailure: Boolean) {
-            connected = false
-            boundJid = null
-            callbacks.onStateChanged(ConnectionState.CLOSED)
             callbacks.onClosed("forced-close", authHardFailure)
         }
     }
@@ -211,9 +196,9 @@ class CoreSemanticsTest {
         val captured = mutableListOf<ConnectionConfig>()
         val sent = mutableListOf<String>()
         val oldFactory = XmppTransportFactoryRegistry.factory
-        XmppTransportFactoryRegistry.factory = { config, callbacks ->
+        XmppTransportFactoryRegistry.factory = { config, _ ->
             captured += config
-            RecordingTransport(config, callbacks, sent)
+            RecordingTransport(config, sent)
         }
         try {
             val takina = createTakina {
@@ -248,8 +233,8 @@ class CoreSemanticsTest {
     fun `message presence and iq all pass through business outbound pipeline`() = runTest {
         val sent = mutableListOf<String>()
         val oldFactory = XmppTransportFactoryRegistry.factory
-        XmppTransportFactoryRegistry.factory = { config, callbacks ->
-            RecordingTransport(config, callbacks, sent)
+        XmppTransportFactoryRegistry.factory = { config, _ ->
+            RecordingTransport(config, sent)
         }
         try {
             val takina = createTakina {
@@ -298,11 +283,8 @@ class CoreSemanticsTest {
         val oldFactory = XmppTransportFactoryRegistry.factory
         XmppTransportFactoryRegistry.factory = { _, callbacks ->
             object : XmppTransport {
-                override var boundJid: String? = null
-                override val isConnected: Boolean = false
-
-                override suspend fun connect(password: String) {
-                    callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+                    onPhase(XmppConnectPhase.TCP_CONNECTING)
                     throw TakinaFailureException(
                         TakinaErrors.of(
                             domain = ErrorDomain.AUTH,
@@ -365,6 +347,49 @@ class CoreSemanticsTest {
     }
 
     @Test
+    fun `stale transport close callback does not invalidate newer active session`() = runTest {
+        val oldFactory = XmppTransportFactoryRegistry.factory
+        lateinit var first: ManualCloseTransport
+        lateinit var second: ManualCloseTransport
+        var created = 0
+        XmppTransportFactoryRegistry.factory = { config, callbacks ->
+            created += 1
+            when (created) {
+                1 -> ManualCloseTransport(config, callbacks).also { first = it }
+                else -> ManualCloseTransport(config, callbacks).also { second = it }
+            }
+        }
+        try {
+            val takina = createTakina {
+                addAccount { jid = alice; password = "secret" }
+                configs {
+                    reconnect {
+                        enabled = true
+                        delayMillis = 0L
+                        factor = 1.0
+                        jitter = 0.0
+                        maxAttempts = 1
+                    }
+                }
+            }
+
+            assertTrue(takina.connect(alice) is TakinaResult.Ok)
+            first.closeUnexpectedly(authHardFailure = false)
+            assertEquals(ConnectionState.ESTABLISHED, takina.runtime.connectionStates.value.getValue(alice))
+
+            // Old lifecycle callback must be ignored after reconnect promoted the new transport.
+            first.closeUnexpectedly(authHardFailure = false)
+            assertEquals(ConnectionState.ESTABLISHED, takina.runtime.connectionStates.value.getValue(alice))
+
+            val send = takina.request.message { to = bob; body = "still-connected" }.send()
+            assertTrue(send is TakinaResult.Ok)
+            takina.shutdown()
+        } finally {
+            XmppTransportFactoryRegistry.factory = oldFactory
+        }
+    }
+
+    @Test
     fun `send returns Err when owner is ambiguous`() = runTest {
         val takina = createTakina {
             addAccount { jid = alice; password = "secret" }
@@ -384,7 +409,7 @@ class CoreSemanticsTest {
     fun `pipeline node exception emits failure event and send continues`() = runTest {
         val sent = mutableListOf<String>()
         val oldFactory = XmppTransportFactoryRegistry.factory
-        XmppTransportFactoryRegistry.factory = { config, callbacks -> RecordingTransport(config, callbacks, sent) }
+        XmppTransportFactoryRegistry.factory = { config, _ -> RecordingTransport(config, sent) }
         try {
             var pipelineFailed = 0
             val takina = createTakina {
@@ -412,28 +437,18 @@ class CoreSemanticsTest {
         val oldFactory = XmppTransportFactoryRegistry.factory
         XmppTransportFactoryRegistry.factory = { config, callbacks ->
             object : XmppTransport {
-                override var boundJid: String? = null
-                private var connected = false
-                override val isConnected: Boolean get() = connected
-
-                override suspend fun connect(password: String) {
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
                     if (config.owner == carol) error("forced connect failure")
-                    callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
-                    callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
-                    callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
-                    callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
-                    boundJid = "${config.owner}/${config.resource}"
-                    connected = true
-                    callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+                    onPhase(XmppConnectPhase.TCP_CONNECTING)
+                    onPhase(XmppConnectPhase.STREAM_OPENING)
+                    onPhase(XmppConnectPhase.AUTHENTICATING)
+                    onPhase(XmppConnectPhase.BINDING_RESOURCE)
+                    return XmppSession("${config.owner}/${config.resource}")
                 }
 
                 override suspend fun sendRaw(xml: String) = Unit
 
-                override suspend fun disconnect() {
-                    connected = false
-                    boundJid = null
-                    callbacks.onStateChanged(ConnectionState.CLOSED)
-                }
+                override suspend fun disconnect() = Unit
             }
         }
         try {
@@ -473,30 +488,20 @@ class CoreSemanticsTest {
         val oldFactory = XmppTransportFactoryRegistry.factory
         XmppTransportFactoryRegistry.factory = { config, callbacks ->
             object : XmppTransport {
-                override var boundJid: String? = null
-                private var connected = false
-                override val isConnected: Boolean get() = connected
-
-                override suspend fun connect(password: String) {
-                    callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
-                    callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
-                    callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
-                    callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
-                    boundJid = "${config.owner}/${config.resource}"
-                    connected = true
-                    callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+                    onPhase(XmppConnectPhase.TCP_CONNECTING)
+                    onPhase(XmppConnectPhase.STREAM_OPENING)
+                    onPhase(XmppConnectPhase.AUTHENTICATING)
+                    onPhase(XmppConnectPhase.BINDING_RESOURCE)
                     callbacks.onFrame("<message from='bob@example.com'><body>hi</body></message>")
+                    return XmppSession("${config.owner}/${config.resource}")
                 }
 
                 override suspend fun sendRaw(xml: String) {
                     sent += xml
                 }
 
-                override suspend fun disconnect() {
-                    connected = false
-                    boundJid = null
-                    callbacks.onStateChanged(ConnectionState.CLOSED)
-                }
+                override suspend fun disconnect() = Unit
             }
         }
         try {
@@ -517,6 +522,50 @@ class CoreSemanticsTest {
 
             assertEquals(1, inbound)
             assertEquals(1, outbound)
+            takina.shutdown()
+        } finally {
+            XmppTransportFactoryRegistry.factory = oldFactory
+        }
+    }
+
+    @Test
+    fun `async inbound frame from active transport still emits raw inbound event`() = runTest {
+        val oldFactory = XmppTransportFactoryRegistry.factory
+        XmppTransportFactoryRegistry.factory = { config, callbacks ->
+            object : XmppTransport {
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+                    onPhase(XmppConnectPhase.TCP_CONNECTING)
+                    onPhase(XmppConnectPhase.STREAM_OPENING)
+                    onPhase(XmppConnectPhase.AUTHENTICATING)
+                    onPhase(XmppConnectPhase.BINDING_RESOURCE)
+                    CoroutineScope(Dispatchers.Default).launch {
+                        delay(20)
+                        callbacks.onFrame("<message from='bob@example.com'><body>async</body></message>")
+                    }
+                    return XmppSession("${config.owner}/${config.resource}")
+                }
+
+                override suspend fun sendRaw(xml: String) = Unit
+                override suspend fun disconnect() = Unit
+            }
+        }
+        try {
+            var inbound = 0
+            val inboundSignal = CompletableDeferred<Unit>()
+            val takina = createTakina {
+                addAccount { jid = alice; password = "secret" }
+            }
+            takina.events.on(RawFrameInboundEvent) {
+                inbound += 1
+                inboundSignal.complete(Unit)
+            }
+
+            assertTrue(takina.connect(alice) is TakinaResult.Ok)
+            withContext(Dispatchers.Default) {
+                withTimeout(1000) { inboundSignal.await() }
+            }
+
+            assertEquals(1, inbound)
             takina.shutdown()
         } finally {
             XmppTransportFactoryRegistry.factory = oldFactory

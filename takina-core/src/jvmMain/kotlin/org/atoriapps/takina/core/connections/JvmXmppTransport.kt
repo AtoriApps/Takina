@@ -12,7 +12,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.util.Base64
 import javax.security.auth.callback.CallbackHandler
 import javax.security.auth.callback.NameCallback
 import javax.security.auth.callback.PasswordCallback
@@ -48,12 +47,7 @@ internal class JvmXmppTransport(
     private var reader: JvmXmlFrameReader? = null
     private var readLoopStarted = false
     private var closedByClient = false
-
-    override var boundJid: String? = null
-        private set
-
-    override val isConnected: Boolean
-        get() = socket?.isConnected == true && socket?.isClosed == false && boundJid != null
+    private var boundJid: String? = null
 
     private fun fail(
         domain: ErrorDomain,
@@ -73,49 +67,49 @@ internal class JvmXmppTransport(
         )
     }
 
-    override suspend fun connect(password: String) = withContext(Dispatchers.IO) {
-        if (isConnected) return@withContext
+    override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession = withContext(Dispatchers.IO) {
+        val existingBoundJid = boundJid
+
+        if (socket?.isConnected == true && socket?.isClosed == false && !existingBoundJid.isNullOrBlank()) return@withContext XmppSession(existingBoundJid)
+
         closedByClient = false
 
         try {
-            callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
+            onPhase(XmppConnectPhase.TCP_CONNECTING)
             connectSocket()
 
             if (config.securityMode == SecurityMode.DIRECT_TLS) {
-                callbacks.onStateChanged(ConnectionState.TLS_HANDSHAKING)
+                onPhase(XmppConnectPhase.TLS_HANDSHAKING)
                 upgradeToTls()
             }
 
-            callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
+            onPhase(XmppConnectPhase.STREAM_OPENING)
             var features = openStreamAndReadFeatures()
 
             if (config.securityMode == SecurityMode.START_TLS) {
-                if (features.firstDescendant("starttls") == null) {
-                    fail(ErrorDomain.TLS, 201, "Server does not advertise STARTTLS", retryable = false)
-                }
+                if (features.firstDescendant("starttls") == null) fail(ErrorDomain.TLS, 201, "Server does not advertise STARTTLS", retryable = false)
 
-                callbacks.onStateChanged(ConnectionState.TLS_HANDSHAKING)
+                onPhase(XmppConnectPhase.TLS_HANDSHAKING)
                 requestStartTls()
                 upgradeToTls()
 
-                callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
+                onPhase(XmppConnectPhase.STREAM_OPENING)
                 features = openStreamAndReadFeatures()
             }
 
-            callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
+            onPhase(XmppConnectPhase.AUTHENTICATING)
             authenticate(features, password)
 
-            callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
+            onPhase(XmppConnectPhase.STREAM_OPENING)
             features = openStreamAndReadFeatures()
-            if (features.firstDescendant("bind") == null) {
-                fail(ErrorDomain.BIND, 201, "Server does not advertise resource binding", retryable = false)
-            }
+            if (features.firstDescendant("bind") == null) fail(ErrorDomain.BIND, 201, "Server does not advertise resource binding", retryable = false)
 
-            callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
-            performResourceBind()
-            callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+            onPhase(XmppConnectPhase.BINDING_RESOURCE)
+            val session = XmppSession(boundJid = performResourceBind())
+            boundJid = session.boundJid
 
             startReadLoop()
+            session
         } catch (t: Throwable) {
             runCatching {
                 closeInternal(
@@ -381,7 +375,7 @@ internal class JvmXmppTransport(
         }
     }
 
-    private suspend fun performResourceBind() {
+    private suspend fun performResourceBind(): String {
         val id = "bind-1"
         val bind = XmlWriter.render(xml("iq") {
             attr("id", id)
@@ -395,11 +389,11 @@ internal class JvmXmppTransport(
 
         val resultFrame = readRequiredFrame("bind result")
         val result = XmlParser.parseElementOrNull(resultFrame)
-        if (result?.localName != "iq" || result.attribute("type") != "result") {
-            fail(ErrorDomain.BIND, 202, "Bind failed: $resultFrame", retryable = true)
-        }
-        val jid = result.firstDescendant("jid")?.textContent()
-        boundJid = jid ?: "${config.owner}/${config.resource}"
+        if (result?.localName != "iq" || result.attribute("type") != "result" || result.attribute("id") != id) fail(ErrorDomain.BIND, 202, "Bind failed: $resultFrame", retryable = true)
+
+        val jid = result.firstDescendant("jid")?.textContent()?.trim()
+        if (jid.isNullOrBlank()) fail(ErrorDomain.BIND, 203, "Bind result missing jid: $resultFrame", retryable = true)
+        return jid
     }
 
     private suspend fun readRequiredFrame(label: String): String = withContext(Dispatchers.IO) {
@@ -488,10 +482,7 @@ internal class JvmXmppTransport(
         reader = null
         boundJid = null
         readLoopStarted = false
-        runCatching { callbacks.onStateChanged(ConnectionState.CLOSED) }
-        if (!closedByClient && notifyDisconnected) {
-            runCatching { callbacks.onClosed(reason, authHardFailure) }
-        }
+        if (!closedByClient && notifyDisconnected) runCatching { callbacks.onClosed(reason, authHardFailure) }
     }
 
     private fun streamOpen(): String = XmlWriter.startTag(

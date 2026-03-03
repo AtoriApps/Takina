@@ -1,17 +1,25 @@
 package org.atoriapps.takina.core.connections
 
 internal interface XmppTransportCallbacks {
-    suspend fun onStateChanged(to: ConnectionState)
     suspend fun onFrame(frame: String)
     suspend fun onFrameParseFailed(raw: String, reason: String)
     suspend fun onClosed(reason: String?, authHardFailure: Boolean)
 }
 
-internal interface XmppTransport {
-    val isConnected: Boolean
-    val boundJid: String?
+internal enum class XmppConnectPhase {
+    TCP_CONNECTING,
+    TLS_HANDSHAKING,
+    STREAM_OPENING,
+    AUTHENTICATING,
+    BINDING_RESOURCE,
+}
 
-    suspend fun connect(password: String)
+internal data class XmppSession(
+    val boundJid: String,
+)
+
+internal interface XmppTransport {
+    suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession
     suspend fun sendRaw(xml: String)
     suspend fun disconnect()
 }

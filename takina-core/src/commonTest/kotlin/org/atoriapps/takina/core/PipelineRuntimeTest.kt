@@ -25,6 +25,8 @@ class PipelineRuntimeTest {
         assertEquals(InboundClassification.STANZA_PRESENCE, classifyInbound("<presence/>"))
         assertEquals(InboundClassification.STANZA_IQ, classifyInbound("<iq/>"))
         assertEquals(InboundClassification.CONTROL, classifyInbound("<r xmlns='urn:xmpp:sm:3'/>"))
+        assertEquals(InboundClassification.CONTROL, classifyInbound("<sm:r xmlns:sm='urn:xmpp:sm:3'/>"))
+        assertEquals(InboundClassification.UNKNOWN, classifyInbound("<r/>"))
         assertEquals(InboundClassification.UNKNOWN, classifyInbound("<x/>"))
     }
 

@@ -1,6 +1,8 @@
 package org.atoriapps.takina.core
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import org.atoriapps.takina.core.bootstrap.FeatureTopologyValidator
 import org.atoriapps.takina.core.connections.*
 import org.atoriapps.takina.core.controlling.ConfigRejectCode
@@ -139,6 +141,8 @@ internal class CoreTakina(
     private val accounts = linkedMapOf<BareJid, AccountDefinition>()
     private val stateMachines = linkedMapOf<BareJid, ConnectionStateMachine>()
     private val transports = linkedMapOf<BareJid, XmppTransport>()
+    private val sessions = linkedMapOf<BareJid, XmppSession>()
+    private val transportLifecycleIds = MutableStateFlow<Map<BareJid, String>>(emptyMap())
     private val intentionalDisconnectOwners = mutableSetOf<BareJid>()
     private var started = false
     private var shutdown = false
@@ -236,7 +240,9 @@ internal class CoreTakina(
         val connection = machine.currentState()
         require(connection == ConnectionState.IDLE || connection == ConnectionState.CLOSED) { "Account must be detached from active connection before removal: $jid" }
         runtime.setAccountState(jid, AccountState.REMOVED)
+        removeTransportLifecycleId(jid)
         runBlocking { transports.remove(jid)?.disconnect() }
+        sessions.remove(jid)
         stateMachines.remove(jid)
         accounts.remove(jid)
         events.emit(AccountRemovedEvent(jid))
@@ -291,8 +297,11 @@ internal class CoreTakina(
         }
 
         if (machine.currentState() == ConnectionState.ESTABLISHED) {
-            runtime.setAccountState(jid, AccountState.ONLINE)
-            return okResult(Unit, correlationId, mark)
+            if (transports[jid] != null && sessions[jid] != null) {
+                runtime.setAccountState(jid, AccountState.ONLINE)
+                return okResult(Unit, correlationId, mark)
+            }
+            transition(jid, machine, ConnectionState.CLOSED)
         }
 
         if (machine.currentState() == ConnectionState.CLOSED) {
@@ -305,17 +314,29 @@ internal class CoreTakina(
 
         runtime.setAccountState(jid, AccountState.CONNECTING)
         unifiedPolicy.onNextConnectionBoundary()
+        val lifecycleId = IdsUtils.newPrefixedId("tp")
 
         val transport = XmppTransportFactoryRegistry.factory(
             account.getConnectionConfig(),
-            transportCallbacksFor(jid),
+            transportCallbacksFor(jid, lifecycleId),
         )
 
-        runCatching { transports.remove(jid)?.disconnect() }
+        val previousTransport = transports.remove(jid)
+        sessions.remove(jid)
+        removeTransportLifecycleId(jid)
+        runCatching { previousTransport?.disconnect() }
         transports[jid] = transport
+        setTransportLifecycleId(jid, lifecycleId)
 
         return runCatching {
-            transport.connect(account.passwordProvider())
+            val session = transport.connect(account.passwordProvider()) { phase ->
+                val to = phase.toConnectionState()
+                val error = transition(jid, machine, to)
+                if (error != null) throw TakinaFailureException(error)
+            }
+            val establishedError = transition(jid, machine, ConnectionState.ESTABLISHED)
+            if (establishedError != null) throw TakinaFailureException(establishedError)
+            sessions[jid] = session
             runtime.setAccountState(jid, AccountState.ONLINE)
             events.emit(SessionReadyEvent(jid))
             okResult(Unit, correlationId, mark)
@@ -327,6 +348,8 @@ internal class CoreTakina(
                 fallbackMessage = failure.message ?: "connect failed",
             )
             if (transports[jid] === transport) transports.remove(jid)
+            if (currentTransportLifecycleId(jid) == lifecycleId) removeTransportLifecycleId(jid)
+            sessions.remove(jid)
             if (machine.currentState() != ConnectionState.CLOSED) {
                 transition(jid, machine, ConnectionState.CLOSED)
             }
@@ -358,7 +381,10 @@ internal class CoreTakina(
 
         intentionalDisconnectOwners += jid
         try {
-            val disconnectFailure = runCatching { transports.remove(jid)?.disconnect() }.exceptionOrNull()
+            val detachedTransport = transports.remove(jid)
+            removeTransportLifecycleId(jid)
+            val disconnectFailure = runCatching { detachedTransport?.disconnect() }.exceptionOrNull()
+            sessions.remove(jid)
             if (disconnectFailure != null) {
                 val error = disconnectFailure.toTakinaError(
                     domain = ErrorDomain.TRANSPORT,
@@ -457,6 +483,8 @@ internal class CoreTakina(
         disconnectAll()
         installedFeatures.forEach { installed -> installed.feature.onShutdown(this@CoreTakina) }
         transports.clear()
+        sessions.clear()
+        transportLifecycleIds.value = emptyMap()
         shutdown = true
         events.emit(TakinaShutdownCompletedEvent())
     }
@@ -479,8 +507,8 @@ internal class CoreTakina(
             return errResult(error, correlationId, mark)
         }
 
-        val (transport, transportError) = connectedTransportOrError(owner)
-        if (transportError != null || transport == null) {
+        val (connection, transportError) = connectedTransportOrError(owner)
+        if (transportError != null || connection == null) {
             val error = transportError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 902, "Transport resolution failed", retryable = false)
             events.emit(RequestFailedEvent(owner, CoreRequestTypes.MESSAGE, error))
             events.emit(MessageSendFailedEvent(owner, request.to, error))
@@ -491,7 +519,7 @@ internal class CoreTakina(
         val raw = XmlWriter.render(xml("message") {
             attr("id", request.messageId)
             attr("to", request.to.toString())
-            attr("from", transport.boundJid)
+            attr("from", connection.session.boundJid)
             element("body") { text(request.body) }
         })
 
@@ -506,7 +534,7 @@ internal class CoreTakina(
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.MESSAGE))
 
-            transport.sendRaw(processed)
+            connection.transport.sendRaw(processed)
             events.emit(MessageSentEvent(owner = owner, to = request.to, body = request.body))
             okResult(MessageOutcome(request.messageId), correlationId, mark)
         }.getOrElse { failure ->
@@ -538,8 +566,8 @@ internal class CoreTakina(
             return errResult(error, correlationId, mark)
         }
 
-        val (transport, transportError) = connectedTransportOrError(owner)
-        if (transportError != null || transport == null) {
+        val (connection, transportError) = connectedTransportOrError(owner)
+        if (transportError != null || connection == null) {
             val error = transportError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 904, "Transport resolution failed", retryable = false)
             events.emit(RequestFailedEvent(owner, CoreRequestTypes.PRESENCE, error))
             return errResult(error, correlationId, mark)
@@ -547,7 +575,7 @@ internal class CoreTakina(
 
         val raw = XmlWriter.render(xml("presence") {
             request.to?.let { attr("to", it.toString()) }
-            attr("from", transport.boundJid)
+            attr("from", connection.session.boundJid)
             request.show?.let { element("show") { text(it.wireValue) } }
             request.status?.let { element("status") { text(it) } }
         })
@@ -563,7 +591,7 @@ internal class CoreTakina(
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.PRESENCE))
 
-            transport.sendRaw(processed)
+            connection.transport.sendRaw(processed)
             okResult(PresenceOutcome(), correlationId, mark)
         }.getOrElse { failure ->
             val error = failure.toTakinaError(
@@ -593,8 +621,8 @@ internal class CoreTakina(
             return errResult(error, correlationId, mark)
         }
 
-        val (transport, transportError) = connectedTransportOrError(owner)
-        if (transportError != null || transport == null) {
+        val (connection, transportError) = connectedTransportOrError(owner)
+        if (transportError != null || connection == null) {
             val error = transportError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 906, "Transport resolution failed", retryable = false)
             events.emit(RequestFailedEvent(owner, CoreRequestTypes.IQ, error))
             return errResult(error, correlationId, mark)
@@ -604,7 +632,7 @@ internal class CoreTakina(
             attr("id", request.id)
             attr("type", request.type)
             attr("to", request.to?.toString())
-            attr("from", transport.boundJid)
+            attr("from", connection.session.boundJid)
             request.payload?.let { node(it) }
         })
         val scope = Scope.Account(owner)
@@ -618,7 +646,7 @@ internal class CoreTakina(
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.IQ))
 
-            transport.sendRaw(processed)
+            connection.transport.sendRaw(processed)
             okResult(IqOutcome(request.id), correlationId, mark)
         }.getOrElse { failure ->
             val error = failure.toTakinaError(
@@ -703,28 +731,41 @@ internal class CoreTakina(
         }
     }
 
-    private fun transportCallbacksFor(owner: BareJid): XmppTransportCallbacks {
+    private fun transportCallbacksFor(owner: BareJid, lifecycleId: String): XmppTransportCallbacks {
         val machine = requireNotNull(stateMachines[owner]) { "State machine not found for owner $owner" }
 
         return object : XmppTransportCallbacks {
-            override suspend fun onStateChanged(to: ConnectionState) {
-                val error = transition(owner, machine, to)
-                if (error != null) throw TakinaFailureException(error)
-            }
-
             override suspend fun onFrame(frame: String) {
+                if (currentTransportLifecycleId(owner) != lifecycleId) return
                 handleInboundFrame(owner, frame)
             }
 
             override suspend fun onFrameParseFailed(raw: String, reason: String) {
+                if (currentTransportLifecycleId(owner) != lifecycleId) return
                 events.emit(FrameInboundParseFailedEvent(owner = owner, raw = raw, reason = reason))
             }
 
             override suspend fun onClosed(reason: String?, authHardFailure: Boolean) {
+                if (currentTransportLifecycleId(owner) != lifecycleId) return
                 if (owner in intentionalDisconnectOwners || shutdown) return
+                sessions.remove(owner)
+                removeTransportLifecycleId(owner)
+                if (machine.currentState() != ConnectionState.CLOSED) {
+                    transition(owner, machine, ConnectionState.CLOSED)
+                }
                 onUnexpectedDisconnect(owner, reason, authHardFailure = authHardFailure)
             }
         }
+    }
+
+    private fun currentTransportLifecycleId(owner: BareJid): String? = transportLifecycleIds.value[owner]
+
+    private fun setTransportLifecycleId(owner: BareJid, lifecycleId: String) {
+        transportLifecycleIds.update { current -> current + (owner to lifecycleId) }
+    }
+
+    private fun removeTransportLifecycleId(owner: BareJid) {
+        transportLifecycleIds.update { current -> current - owner }
     }
 
     private suspend fun handleInboundFrame(owner: BareJid, frame: String) {
@@ -816,9 +857,16 @@ internal class CoreTakina(
         events.emit(AccountAddedEvent(account.jid))
     }
 
-    private fun connectedTransportOrError(owner: BareJid): Pair<XmppTransport?, TakinaError?> {
+    private data class ActiveConnection(
+        val transport: XmppTransport,
+        val session: XmppSession,
+    )
+
+    private fun connectedTransportOrError(owner: BareJid): Pair<ActiveConnection?, TakinaError?> {
         val transport = transports[owner]
-        if (transport == null || !transport.isConnected) {
+        val session = sessions[owner]
+        val state = stateMachines[owner]?.currentState()
+        if (transport == null || session == null || state != ConnectionState.ESTABLISHED) {
             return null to TakinaErrors.of(
                 domain = ErrorDomain.TRANSPORT,
                 number = 106,
@@ -826,7 +874,15 @@ internal class CoreTakina(
                 retryable = true,
             )
         }
-        return transport to null
+        return ActiveConnection(transport, session) to null
+    }
+
+    private fun XmppConnectPhase.toConnectionState(): ConnectionState = when (this) {
+        XmppConnectPhase.TCP_CONNECTING -> ConnectionState.TCP_CONNECTING
+        XmppConnectPhase.TLS_HANDSHAKING -> ConnectionState.TLS_HANDSHAKING
+        XmppConnectPhase.STREAM_OPENING -> ConnectionState.STREAM_OPENING
+        XmppConnectPhase.AUTHENTICATING -> ConnectionState.AUTHENTICATING
+        XmppConnectPhase.BINDING_RESOURCE -> ConnectionState.BINDING_RESOURCE
     }
 
     private fun resolveOwnerOrError(requested: BareJid?): Pair<BareJid?, TakinaError?> {

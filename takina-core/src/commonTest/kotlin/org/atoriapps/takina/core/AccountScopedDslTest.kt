@@ -6,9 +6,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import org.atoriapps.takina.core.connections.ConnectionConfig
-import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.connections.XmppConnectPhase
+import org.atoriapps.takina.core.connections.XmppSession
 import org.atoriapps.takina.core.connections.XmppTransport
-import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
 import org.atoriapps.takina.core.controlling.ApplyMode
 import org.atoriapps.takina.core.controlling.ConnectionConfigPaths
@@ -40,38 +40,28 @@ class AccountScopedDslTest {
 
     private class RecordingTransport(
         private val config: ConnectionConfig,
-        private val callbacks: XmppTransportCallbacks,
         private val configSink: MutableList<ConnectionConfig>,
     ) : XmppTransport {
-        override var boundJid: String? = null
-        private var connected = false
-        override val isConnected: Boolean get() = connected
-
-        override suspend fun connect(password: String) {
-            callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
-            callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
-            callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
-            callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
-            boundJid = "${config.owner}/${config.resource}"
-            connected = true
-            callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+            onPhase(XmppConnectPhase.TCP_CONNECTING)
+            onPhase(XmppConnectPhase.STREAM_OPENING)
+            onPhase(XmppConnectPhase.AUTHENTICATING)
+            onPhase(XmppConnectPhase.BINDING_RESOURCE)
             configSink += config
+            return XmppSession("${config.owner}/${config.resource}")
         }
 
         override suspend fun sendRaw(xml: String) = Unit
 
-        override suspend fun disconnect() {
-            connected = false
-            callbacks.onStateChanged(ConnectionState.CLOSED)
-        }
+        override suspend fun disconnect() = Unit
     }
 
     @Test
     fun `addAccount dsl supports account scoped capability and config at bootstrap`() = runTest {
         val capturedConfig = mutableListOf<ConnectionConfig>()
         val oldFactory = XmppTransportFactoryRegistry.factory
-        XmppTransportFactoryRegistry.factory = { config, callbacks ->
-            RecordingTransport(config, callbacks, capturedConfig)
+        XmppTransportFactoryRegistry.factory = { config, _ ->
+            RecordingTransport(config, capturedConfig)
         }
         try {
             val takina = createTakina {
@@ -100,8 +90,8 @@ class AccountScopedDslTest {
     fun `addAccount dsl account scoped entries are not order sensitive to jid declaration`() = runTest {
         val capturedConfig = mutableListOf<ConnectionConfig>()
         val oldFactory = XmppTransportFactoryRegistry.factory
-        XmppTransportFactoryRegistry.factory = { config, callbacks ->
-            RecordingTransport(config, callbacks, capturedConfig)
+        XmppTransportFactoryRegistry.factory = { config, _ ->
+            RecordingTransport(config, capturedConfig)
         }
         try {
             val takina = createTakina {
@@ -135,8 +125,8 @@ class AccountScopedDslTest {
     fun `addAccount api supports account scoped capability and config at runtime`() = runTest {
         val capturedConfig = mutableListOf<ConnectionConfig>()
         val oldFactory = XmppTransportFactoryRegistry.factory
-        XmppTransportFactoryRegistry.factory = { config, callbacks ->
-            RecordingTransport(config, callbacks, capturedConfig)
+        XmppTransportFactoryRegistry.factory = { config, _ ->
+            RecordingTransport(config, capturedConfig)
         }
         try {
             val takina = createTakina {

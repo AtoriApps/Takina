@@ -13,7 +13,13 @@ import org.atoriapps.takina.core.createTakina
 import org.atoriapps.takina.core.connections.ConnectionState
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
+import org.atoriapps.takina.core.events.FrameInboundParseFailedEvent
+import org.atoriapps.takina.core.events.IqReceivedEvent
+import org.atoriapps.takina.core.events.MessageReceivedEvent
+import org.atoriapps.takina.core.events.PresenceReceivedEvent
+import org.atoriapps.takina.core.events.RequestFailedEvent
 import org.atoriapps.takina.core.events.RawFrameInboundEvent
+import org.atoriapps.takina.core.events.UnknownFrameInboundEvent
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.toBareJid
 import org.atoriapps.takina.core.models.TakinaResult
@@ -28,6 +34,7 @@ class XmppClientTest {
             addAccount {
                 jid = env.jid
                 password = env.password
+                resource = "dev1"
 
                 connection {
                     host = env.host
@@ -43,11 +50,23 @@ class XmppClientTest {
             takina.runtime.connectionStates.collect { it.forEach { p -> println("状态变更：${p.key} -> ${p.value}") } }
         }
         takina.events.on(RawFrameInboundEvent) { println("入 $owner：$xml") }
+        // FIXME：冒烟测试，tmd，接不到入包？？？？
         takina.events.on(FinalFrameOutboundEvent) { println("出 $owner：$xml") }
+        takina.events.on(FrameInboundParseFailedEvent) { println("入解析失败 $owner：$reason; raw=$raw") }
+        takina.events.on(UnknownFrameInboundEvent) { println("入未知帧 $owner：$raw") }
+        takina.events.on(RequestFailedEvent) { println("请求失败 owner=$owner type=$requestType code=${error.code} msg=${error.message}") }
+        takina.events.on(MessageReceivedEvent) { println("消息事件 owner=$owner from=$from body=$body") }
+        takina.events.on(PresenceReceivedEvent) { println("状态事件 owner=$owner from=$from") }
+        takina.events.on(IqReceivedEvent) { println("IQ事件 owner=$owner from=$from") }
 
         val connectAllResult = takina.connectAll()
         assertTrue(connectAllResult is TakinaResult.Ok)
         assertEquals(ConnectionState.ESTABLISHED, takina.runtime.connectionStates.value.values.first())
+
+        val presenceResult = takina.request.presence {
+            status = env.presenceStr
+        }.send()
+        assertTrue(presenceResult is TakinaResult.Ok)
 
         val target = env.messageTo?.toBareJid() ?: env.jid
         val messageResult = takina.request.message {
@@ -56,11 +75,6 @@ class XmppClientTest {
             // ？？？我加密和加密提供者呢？？？
         }.send()
         assertTrue(messageResult is TakinaResult.Ok)
-
-        val presenceResult = takina.request.presence {
-            status = env.presenceStr
-        }.send()
-        assertTrue(presenceResult is TakinaResult.Ok)
 
         val iqResult = takina.request.iq {
             to = target
@@ -94,11 +108,7 @@ class XmppClientTest {
         val trustAll = System.getenv("TRUST_ALL")?.equals("true", ignoreCase = true) == true
         val messageTo = System.getenv("MSG_TO")
         val presenceStr = System.getenv("PRESENCE") ?: "骄傲地使用Takina 1.x"
-        val sasl = System.getenv("SASL")
-            ?.split(',')
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList()
+        val sasl = System.getenv("SASL")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 
         return IntegrationEnv(
             host,

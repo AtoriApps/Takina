@@ -1,6 +1,7 @@
 package org.atoriapps.takina.core.pipeline
 
 import org.atoriapps.takina.core.models.BareJid
+import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.XmlParser
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
@@ -27,11 +28,8 @@ enum class OutboundClassification {
     CONTROL
 }
 
-data class PipelineScopeContext(
-    val owner: BareJid?,
-    val conversationPeer: BareJid? = null,
-    val messageId: String? = null,
-)
+private const val XMPP_SM_NAMESPACE = "urn:xmpp:sm:3"
+private val smControlLocalNames = setOf("r", "a", "resume", "enabled", "resumed", "failed")
 
 data class InboundFrame(
     val raw: String,
@@ -83,7 +81,7 @@ data class NodeActivation(
     val order: Int,
 )
 
-// HACK：会不会过于简单，是否应建立`类型认领管线`
+// HACK、TODO：会不会过于简单，是否应建立`类型认领管线`，由Features提供认领节点
 fun classifyInbound(raw: String): InboundClassification {
     val trimmed = raw.trim()
     if (trimmed.startsWith("</stream:stream")) return InboundClassification.STREAM_END
@@ -93,8 +91,18 @@ fun classifyInbound(raw: String): InboundClassification {
         "message" -> InboundClassification.STANZA_MESSAGE
         "presence" -> InboundClassification.STANZA_PRESENCE
         "iq" -> InboundClassification.STANZA_IQ
-        "r", "a", "resume", "enabled", "resumed", "failed" -> InboundClassification.CONTROL
+        // HACK：下面不该这样，在认领管线时重做
+        in smControlLocalNames -> if (element.isSmControlFrame()) InboundClassification.CONTROL else InboundClassification.UNKNOWN
         "stream", "features" -> InboundClassification.STREAM_META
         else -> InboundClassification.UNKNOWN
     }
+}
+
+private fun XmlElement.isSmControlFrame(): Boolean {
+    val defaultNs = attribute("xmlns")
+    if (defaultNs == XMPP_SM_NAMESPACE) return true
+
+    val prefix = name.substringBefore(':', missingDelimiterValue = "")
+    if (prefix.isBlank()) return false
+    return attribute("xmlns:$prefix") == XMPP_SM_NAMESPACE
 }

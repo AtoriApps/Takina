@@ -70,7 +70,7 @@ class ConnectionStateMachine(
             ConnectionState.IDLE to setOf(ConnectionState.TCP_CONNECTING, ConnectionState.CLOSED),
             ConnectionState.TCP_CONNECTING to setOf(ConnectionState.TLS_HANDSHAKING, ConnectionState.STREAM_OPENING, ConnectionState.CLOSED),
             ConnectionState.TLS_HANDSHAKING to setOf(ConnectionState.STREAM_OPENING, ConnectionState.CLOSED),
-            ConnectionState.STREAM_OPENING to setOf(ConnectionState.AUTHENTICATING, ConnectionState.BINDING_RESOURCE, ConnectionState.CLOSED),
+            ConnectionState.STREAM_OPENING to setOf(ConnectionState.TLS_HANDSHAKING, ConnectionState.AUTHENTICATING, ConnectionState.BINDING_RESOURCE, ConnectionState.CLOSED,),
             ConnectionState.AUTHENTICATING to setOf(ConnectionState.STREAM_OPENING, ConnectionState.BINDING_RESOURCE, ConnectionState.CLOSED),
             ConnectionState.BINDING_RESOURCE to setOf(ConnectionState.ESTABLISHED, ConnectionState.CLOSED),
             ConnectionState.ESTABLISHED to setOf(ConnectionState.INTERRUPTED, ConnectionState.CLOSED),

@@ -12,6 +12,7 @@ class ConnectionStateMachineTest {
     fun `accepts valid state transitions`() {
         val machine = ConnectionStateMachine()
         assertTrue(machine.transitionTo(ConnectionState.TCP_CONNECTING).accepted)
+        assertTrue(machine.transitionTo(ConnectionState.STREAM_OPENING).accepted)
         assertTrue(machine.transitionTo(ConnectionState.TLS_HANDSHAKING).accepted)
         assertTrue(machine.transitionTo(ConnectionState.STREAM_OPENING).accepted)
         assertTrue(machine.transitionTo(ConnectionState.AUTHENTICATING).accepted)

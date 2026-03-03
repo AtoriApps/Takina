@@ -55,15 +55,6 @@ class EventBusTest {
     }
 
     @Test
-    fun `onSubtypes subscription receives subtype events`() {
-        val bus = TakinaEventBus()
-        var count = 0
-        bus.onSubtypes(TakinaEvent::class) { count += 1 }
-        bus.emit(TakinaStartedEvent())
-        assertEquals(1, count)
-    }
-
-    @Test
     fun `handler exception is isolated and emits failure event by default`() {
         val bus = TakinaEventBus()
         var okCount = 0

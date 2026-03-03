@@ -69,7 +69,7 @@ internal class JvmXmppTransport(
                 message = message,
                 retryable = retryable,
                 cause = cause,
-            ),
+            )
         )
     }
 

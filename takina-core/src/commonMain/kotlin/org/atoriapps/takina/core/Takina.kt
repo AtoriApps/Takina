@@ -47,9 +47,10 @@ interface Takina {
     fun configs(init: ConfigDsl.() -> Unit)
     fun addAccount(init: AccountDsl.() -> Unit)
 
-    // TODO、CHECK：addAccount要不要接受通过AccountContext（也就是Re-Add）？
     fun removeAccount(jid: BareJid)
+
     fun removeAccount(accountContext: AccountContext) = removeAccount(accountContext.owner)
+
     fun account(jid: BareJid): AccountContext
 
     fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
@@ -66,7 +67,8 @@ interface Takina {
 
 class AccountContext internal constructor(private val takina: CoreTakina, val owner: BareJid) {
     val request: TakinaRequestApi = TakinaRequestApi(takina, owner)
-    val events: TakinaEventBus get() = takina.events
+
+    // TODO、CHECK：未来要不要提供`.events`？仅监听带我户主的事件。但这样可能要提一个带户主的中间事件层
 
     fun capabilities(init: CapabilityDsl.() -> Unit) {
         CapabilityDsl(

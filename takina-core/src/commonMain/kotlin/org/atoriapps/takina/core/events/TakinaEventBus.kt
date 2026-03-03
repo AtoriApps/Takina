@@ -44,8 +44,8 @@ data class EventHandlerFailedEvent(
     val subscribedEventType: String,
     val handlerId: Long,
     val reason: String,
-) : BasicTakinaEvent("EventHandlerFailedEvent") {
-    companion object : StaticEventProvider<EventHandlerFailedEvent>(EventHandlerFailedEvent::class)
+) : TakinaEvent("EventHandlerFailedEvent") {
+    companion object : TakinaEventProvider<EventHandlerFailedEvent>(EventHandlerFailedEvent::class)
 }
 
 class TakinaEventBus {
@@ -57,8 +57,7 @@ class TakinaEventBus {
 
     private val stateMutex = Mutex()
     private var sequence: Long = 0
-    private val exactHandlers = linkedMapOf<KClass<out TakinaEvent>, MutableMap<Long, (TakinaEvent) -> Unit>>()
-    private val subtypeHandlers = linkedMapOf<KClass<out TakinaEvent>, MutableMap<Long, (TakinaEvent) -> Unit>>()
+    private val exactHandlers = linkedMapOf<KClass<out TakinaEvent>, MutableMap<Long, TakinaEvent.() -> Unit>>()
     private val stream = MutableSharedFlow<TakinaEvent>(replay = 1, extraBufferCapacity = 256)
     private val dispatchScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var policyState: EventBusPolicy = EventBusPolicy()
@@ -86,50 +85,31 @@ class TakinaEventBus {
 
     private fun snapshotHandlersFor(event: TakinaEvent): List<RegisteredHandler> = runBlocking {
         stateMutex.withLock {
-            val exact = exactHandlers[event::class].orEmpty().entries.map { (id, callback) ->
+            exactHandlers[event::class].orEmpty().entries.map { (id, callback) ->
                 RegisteredHandler(
                     id = id,
                     subscribedType = event::class,
                     callback = callback,
                 )
             }
-            val subtypes = subtypeHandlers.entries.asSequence()
-                .filter { (subscribedType, _) -> subscribedType.isInstance(event) }
-                .flatMap { (subscribedType, mapped) ->
-                    mapped.entries.asSequence().map { (id, callback) ->
-                        RegisteredHandler(
-                            id = id,
-                            subscribedType = subscribedType,
-                            callback = callback,
-                        )
-                    }
-                }
-                .toList()
-            exact + subtypes
         }
     }
 
     private fun dispatch(event: TakinaEvent, targets: List<RegisteredHandler>, activePolicy: EventBusPolicy) {
         when (activePolicy.dispatchMode) {
             EventDispatchMode.ALL_TOGETHER -> {
-                targets.forEach { target ->
-                    invokeHandler(target, event, activePolicy, allowFailureEvent = event !is EventHandlerFailedEvent)
-                }
+                targets.forEach { invokeHandler(it, event, activePolicy, allowFailureEvent = event !is EventHandlerFailedEvent) }
             }
 
             EventDispatchMode.PER_EVENT_COROUTINE -> {
                 dispatchScope.launch {
-                    targets.forEach { target ->
-                        invokeHandler(target, event, activePolicy, allowFailureEvent = event !is EventHandlerFailedEvent)
-                    }
+                    targets.forEach { invokeHandler(it, event, activePolicy, allowFailureEvent = event !is EventHandlerFailedEvent) }
                 }
             }
 
             EventDispatchMode.PER_HANDLER_COROUTINE -> {
                 targets.forEach { target ->
-                    dispatchScope.launch {
-                        invokeHandler(target, event, activePolicy, allowFailureEvent = event !is EventHandlerFailedEvent)
-                    }
+                    dispatchScope.launch { invokeHandler(target, event, activePolicy, allowFailureEvent = event !is EventHandlerFailedEvent) }
                 }
             }
         }
@@ -140,6 +120,7 @@ class TakinaEventBus {
             target.callback(event)
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
+
             handleHandlerFailure(
                 activePolicy = activePolicy,
                 event = event,
@@ -151,14 +132,16 @@ class TakinaEventBus {
     }
 
     private fun handleHandlerFailure(
-        activePolicy: EventBusPolicy, event: TakinaEvent,
-        target: RegisteredHandler, throwable: Throwable, allowFailureEvent: Boolean,
+        activePolicy: EventBusPolicy, event: TakinaEvent, target: RegisteredHandler, throwable: Throwable, allowFailureEvent: Boolean,
     ) {
         when (activePolicy.handlerFailureMode) {
-            EventHandlerFailureMode.IGNORE -> Unit
+            EventHandlerFailureMode.IGNORE -> Unit // 导致错误被压制
+
             EventHandlerFailureMode.RE_THROW -> throw throwable
+
             EventHandlerFailureMode.EMIT_FAILURE_EVENT -> {
-                if (!allowFailureEvent) return
+                if (!allowFailureEvent) return // 导致错误被压制
+
                 val failureEvent = EventHandlerFailedEvent(
                     originalEventId = event.eventId,
                     originalEventType = event.type,
@@ -166,20 +149,14 @@ class TakinaEventBus {
                     handlerId = target.id,
                     reason = throwable.message ?: throwable::class.simpleName ?: "handler failed",
                 )
+
                 emit(failureEvent)
             }
         }
     }
 
-    private fun <T : TakinaEvent> registerHandler(
-        registry: MutableMap<KClass<out TakinaEvent>, MutableMap<Long, (TakinaEvent) -> Unit>>, type: KClass<T>, handler: T.() -> Unit,
-    ): EventSubscription {
-        val typed: (TakinaEvent) -> Unit = { event ->
-            if (type.isInstance(event)) {
-                @Suppress("UNCHECKED_CAST")
-                (event as T).handler()
-            }
-        }
+    private fun <T : TakinaEvent> registerHandler(registry: MutableMap<KClass<out TakinaEvent>, MutableMap<Long, (TakinaEvent) -> Unit>>, type: KClass<T>, handler: T.() -> Unit): EventSubscription {
+        val typed: (TakinaEvent) -> Unit = { event -> if (type.isInstance(event)) @Suppress("UNCHECKED_CAST") handler(event as T) }
 
         val id = runBlocking {
             stateMutex.withLock {
@@ -192,16 +169,12 @@ class TakinaEventBus {
         return EventSubscription(id, type, this)
     }
 
+    @Deprecated("请使用传入提供者的版本，更方便")
     fun <T : TakinaEvent> on(type: KClass<T>, handler: T.() -> Unit) = registerHandler(exactHandlers, type, handler)
 
     fun <T : TakinaEvent> on(type: TakinaEventProvider<T>, handler: T.() -> Unit) = on(type.eventClass, handler)
 
-    fun <T : TakinaEvent> onSubtypes(type: KClass<T>, handler: T.() -> Unit) = registerHandler(subtypeHandlers, type, handler)
-
-    fun <T : TakinaEvent> onSubtypes(type: TakinaEventProvider<T>, handler: T.() -> Unit) = onSubtypes(type.eventClass, handler)
-
-    fun onAny(handler: TakinaEvent.() -> Unit) = onSubtypes(TakinaEvent::class, handler)
-
+    @Deprecated("请使用传入提供者的版本，更方便")
     fun <T : TakinaEvent> once(type: KClass<T>, handler: T.() -> Unit): EventSubscription {
         var subscription: EventSubscription? = null
 
@@ -215,26 +188,10 @@ class TakinaEventBus {
 
     fun <T : TakinaEvent> once(type: TakinaEventProvider<T>, handler: T.() -> Unit) = once(type.eventClass, handler)
 
-    fun <T : TakinaEvent> onceSubtypes(type: KClass<T>, handler: T.() -> Unit): EventSubscription {
-        var subscription: EventSubscription? = null
-
-        subscription = onSubtypes(type) {
-            subscription!!.remove()
-            handler()
-        }
-
-        return subscription
-    }
-
-    fun <T : TakinaEvent> onceSubtypes(type: TakinaEventProvider<T>, handler: T.() -> Unit) = onceSubtypes(type.eventClass, handler)
-
-    fun onceAny(handler: TakinaEvent.() -> Unit) = onceSubtypes(TakinaEvent::class, handler)
-
     fun remove(subscription: EventSubscription) {
         runBlocking {
             stateMutex.withLock {
                 exactHandlers[subscription.eventClass]?.remove(subscription.id)
-                subtypeHandlers[subscription.eventClass]?.remove(subscription.id)
             }
         }
     }

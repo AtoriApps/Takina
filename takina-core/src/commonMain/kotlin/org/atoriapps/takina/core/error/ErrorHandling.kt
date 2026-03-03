@@ -14,7 +14,8 @@ fun Throwable.toTakinaError(
 ): TakinaError {
     if (this is CancellationException) throw this
     return when (this) {
-        is TakinaFailureException -> this.error
+        is TakinaFailureException -> this.error // TIPS：直接解包
+
         else -> TakinaErrors.of(
             domain = domain,
             number = number,

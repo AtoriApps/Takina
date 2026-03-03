@@ -5,22 +5,10 @@ import kotlin.reflect.KClass
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-interface TakinaEvent {
-    val eventId: String
-    val occurredAt: Instant
-    val type: String
-}
+abstract class TakinaEventProvider<EVENT : TakinaEvent>(val eventClass: KClass<EVENT>)
 
-interface TakinaEventProvider<EVENT : TakinaEvent> {
-    val eventClass: KClass<EVENT>
-}
-
-abstract class StaticEventProvider<EVENT : TakinaEvent>(
-    final override val eventClass: KClass<EVENT>,
-) : TakinaEventProvider<EVENT>
-
-open class BasicTakinaEvent(
-    override val type: String,
-    override val eventId: String = FunctionalUtils.newTraceId("evt"),
-    override val occurredAt: Instant = Clock.System.now(),
-) : TakinaEvent
+abstract class TakinaEvent(
+     val type: String,
+     val eventId: String = FunctionalUtils.newTraceId("evt"),
+     val occurredAt: Instant = Clock.System.now()
+)

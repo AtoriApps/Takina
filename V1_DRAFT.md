@@ -1,16 +1,12 @@
 # Takina v1 草案
 
-Takina（org.atoriapps.takina.*）是Kotlin Multiplatform XMPP 库
+Takina（org.atoriapps.takina）是Kotlin Multiplatform XMPP 库
 
 ---
 
 ## 文档定位
 
-本文档用于定义 Takina v1 的规范语义
-
-本文档不是实现计划
-
-本文档优先解决边界与一致性问题
+本文档用于定义 Takina v1 的规范语义，确保实现的有序
 
 ---
 
@@ -20,9 +16,9 @@ Takina（org.atoriapps.takina.*）是Kotlin Multiplatform XMPP 库
 
 连接 认证 收发 状态 错误语义保持一致
 
-### 统一扩展
+### 外挂功能
 
-组件与插件合并为统一抽象
+核心以外的功能（由XEPs定义），由外挂功能（Features）实现
 
 ### 协作式边界
 库负责协议正确性与运行时一致性
@@ -71,9 +67,9 @@ API简明实用，库开箱即用
 - Feature: 统一扩展单元
 - Capability: Feature 的能力开关语义
 - Node: Pipeline 执行节点
-- Unified Policy: 能力、开关、节点的全局具体求值层
+- Unified Policy: 能力、开关、节点的具体求值层
 - Scope: 配置作用域
-- Owner: 会话户主账号
+- Owner: 上下文（Context）户主账号
 - Business Outbound: 业务出站消息
 - Control Outbound: 协议控制出站帧
 
@@ -84,15 +80,14 @@ API简明实用，库开箱即用
 ### 创建入口与预设
 
 `preset` 放在构造参数层
-DSL 内不提供 `installPreset` 同义入口
 
-建议签名
+工厂方法签名
 
 ```kotlin
 fun createTakina(
   featurePreset: FeaturePreset = FeaturePreset.Recommended,
   configPreset: ConfigPreset = ConfigPreset.Default,
-  init: TakinaConfiguration.() -> Unit,
+  init: TakinaConfiguration.() -> Unit
 ): Takina
 ```
 
@@ -127,14 +122,15 @@ fun createTakina(
 
 ```kotlin
 interface TakinaFeature {
-  val key: FeatureKey
   val supportedScopes: Set<ScopeKind>
   val applyMode: ApplyMode
+  val requires: Set<TakinaFeatureProvider<out TakinaFeature>>
+  val conflictsWith: Set<TakinaFeatureProvider<out TakinaFeature>>
 
-  fun onInstall(context: Takina) {}
-  fun onShutdown(context: Takina) {}
+  fun onInstall(context: Takina)
+  fun onShutdown(context: Takina)
 
-  fun api(): FeatureApi? = null
+  fun api(): FeatureApi? // 此处方法为语义示例，具体实现以源码版本为准
     
   fun lifecycleHooks(): List<ConnectionLifecycleHook> = emptyList()
     
@@ -152,7 +148,6 @@ Feature 允许声明依赖与互斥：
 ```kotlin
 interface TakinaFeature {
   val requires: Set<FeatureKey>
-  val optionalRequires: Set<FeatureKey>
   val conflictsWith: Set<FeatureKey>
 }
 ```
@@ -216,39 +211,16 @@ data class FeatureTopologyError(
 
 - `BUILD_TIME_IMMUTABLE`（变更必须拒绝）
 
-全配置项应以字段级元数据维护：
+配置项的Definition：
 
 ```kotlin
-data class ConfigMeta(
+data class ConfigSpec(
   val path: String,
   val applyMode: ApplyMode,
   val mutable: Boolean,
+  // ...
 )
 ```
-
-#### v1 生效矩阵（冻结）
-
-| 配置项                                                | 生效时机                   |
-|----------------------------------------------------|------------------------|
-| `connection.host` `connection.port` `securityMode` | `NEXT_CONNECTION`      |
-| TLS 信任链与证书钉扎配置                                     | `NEXT_CONNECTION`      |
-| SASL 机制与认证参数                                       | `NEXT_CONNECTION`      |
-| 资源绑定策略（resource）                                   | `NEXT_CONNECTION`      |
-| 压缩协商开关                                             | `NEXT_CONNECTION`      |
-| `StreamManagementFeature` 启停与恢复策略                  | `NEXT_CONNECTION`      |
-| 握手阶段超时参数                                           | `NEXT_CONNECTION`      |
-| 业务入站/出站节点启停                                        | `NEXT_ITEM`            |
-| 业务入站/出站节点排序                                        | `NEXT_ITEM`            |
-| 默认消息加密策略（global/account/conversation）              | `NEXT_ITEM`            |
-| 默认请求超时与重试参数                                        | `NEXT_ITEM`            |
-| 未知帧处理策略                                            | `NEXT_ITEM`            |
-| 自动重连开关                                             | `IMMEDIATE`            |
-| 重连退避参数（delay/factor/jitter/maxAttempts）            | `IMMEDIATE`            |
-| 观测采样与告警阈值                                          | `IMMEDIATE`            |
-| 事件订阅过滤器                                            | `IMMEDIATE`            |
-| 不涉及协商的纯 API 能力开关                                   | `IMMEDIATE`            |
-| 涉及协商的能力开关                                          | `NEXT_CONNECTION`      |
-| `features { install(...) }` 安装集                    | `BUILD_TIME_IMMUTABLE` |
 
 ### 动态开关
 
@@ -260,13 +232,13 @@ data class ConfigMeta(
 
 ### 行为矩阵
 
-| 状态 | API 可见性 | Hook 执行 | Node 执行 | 备注 |
-|---|---|---|---|---|
-| Feature 未安装 | 不可见或返回 NotInstalled | 否 | 否 | 不参与运行时 |
-| Feature 已安装 作用域禁用 | 可见 调用返回 FeatureDisabled | 否 | 否 | 能力存在但不生效 |
-| Feature 已安装并启用 无节点 | 可见 | 是 | 不适用 | 纯 API 或纯 Hook 能力 |
-| Feature 已安装并启用 节点禁用 | 可见 | 是 | 否 | 仅节点不生效 |
-| Feature 已安装并启用 节点启用 | 可见 | 是 | 是 | 全量生效 |
+| 状态                  | API 可见性                 | Hook 执行 | Node 执行 | 备注               |
+|---------------------|-------------------------|---------|---------|------------------|
+| Feature 未安装         | 不可见或返回 NotInstalled     | 否       | 否       | 不参与运行时           |
+| Feature 已安装 作用域禁用   | 可见 调用返回 FeatureDisabled | 否       | 否       | 能力存在但不生效         |
+| Feature 已安装并启用 无节点  | 可见                      | 是       | 不适用     | 纯 API 或纯 Hook 能力 |
+| Feature 已安装并启用 节点禁用 | 可见                      | 是       | 否       | 仅节点不生效           |
+| Feature 已安装并启用 节点启用 | 可见                      | 是       | 是       | 全量生效             |
 
 ### 事件模型（v1 精简刚需）
 
@@ -292,6 +264,8 @@ interface TakinaEvent {
 - 若事件总线存在异步分发时间，放在 envelope，不写入事件基底
 
 #### Core 事件（内置）
+
+举例：（具体实现了什么，以代码库为准）
 
 - `TakinaStartedEvent`
 - `TakinaShutdownCompletedEvent`
@@ -351,7 +325,7 @@ interface TakinaEvent {
 
 ### 可解释性与观测
 
-必须提供 introspection
+必须提供 Introspection
 
 - `describeActiveFeatures(scope)`
 - `describeActivePipeline(direction, scope)`
@@ -496,7 +470,7 @@ room.join {}
 
 ### 上下文边界
 
-上下文是 facade 与 context
+上下文等于是预绑定了专门信息的Takina接口，为你提供使用上的便捷
 
 不是独立状态机
 
@@ -582,7 +556,7 @@ room.join {}
 - `takina.[FEATURE_NAME]: FeatureApi`：如 `takina.omemo`、`takina.streamManagement`
 - feature 能力请求与统一请求入口可并存，结果语义保持一致
 - `takina.<featureApi>...` 强调能力边界
-- `takina.request.<featureRequest>...` 强调统一核心入口
+- `takina.request.<featureRequestApi>...` 强调统一核心入口
 
 说明：
 
@@ -604,7 +578,7 @@ data class ResultMeta(
 )
 ```
 
-### 注册功能设定
+### 注册功能设定预想
 
 注册是打算在独立的轻量级连接上进行的，注册成功后用户可选择（通过调用API）把账号变成正式的
 
@@ -728,7 +702,7 @@ suspend fun RegistrationApi.newSession(
 
 ### 版本语义
 
-`0.x`（目前）：快速演进中
+`0.x`：已移除
 `1.0`起：遵循 SemVer
 
 #### 0.x的迁移策略
@@ -798,7 +772,7 @@ val room = alice.room("a@conference.example.com".toBareJid())
 
 takina./* suspend fun */connectAll()
 
-alice.events.on<MessageEvents.Received> { event ->
+takina.events.on<MessageEvents.Received> { event ->
   println(event.message.body)
 }
 
@@ -883,14 +857,15 @@ takina/
 │     │  ├─ core/ # 根目录下还有：Takina、createTakina、TakinaApiAndDsl
 │     │  │  ├─ bootstrap/
 │     │  │  ├─ connections/
-│     │  │  ├─ controlling/
+│     │  │  ├─ controlling/ # 配置项定义集、统一策略层等
 │     │  │  ├─ error/ # 错误定义
 │     │  │  ├─ events/ # 核心事件、事件基本定义、事件总线
-│     │  │  ├─ feature/ # 功能基本定义
+│     │  │  ├─ features/ # 功能基本定义
 │     │  │  ├─ models/ # Jid、作用域、Id、TakinaResult
 │     │  │  ├─ pipeline/ # inbound/outbound 运行时 + 度量
 │     │  │  ├─ request/
 │     │  │  ├─ runtime/ # 可监听状态 + 自身状况检视
+│     │  │  ├─ utils/
 │     │  │  └─ xml/ # XML构造和解析：内部自用
 │     │  └─ features/
 │     │     ├─ sm/ # [首批功能] XEP-0198
@@ -936,5 +911,3 @@ takina/
 ## 补充构想
 
 暂无
-
----

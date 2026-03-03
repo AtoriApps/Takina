@@ -11,8 +11,11 @@ import kotlin.reflect.KClass
 
 interface TakinaFeature {
     val supportedScopes: Set<ScopeKind>
+
     val applyMode: ApplyMode
+
     val requires: Set<TakinaFeatureProvider<out TakinaFeature>> get() = emptySet()
+
     val conflictsWith: Set<TakinaFeatureProvider<out TakinaFeature>> get() = emptySet()
 
     // TIPS：时机在管线、API被注册后
@@ -22,7 +25,9 @@ interface TakinaFeature {
     // TODO：缺少`PreBind`和`Pre断连`处理钩子
 
     fun lifecycleHooks(): List<ConnectionLifecycleHook> = emptyList()
+
     fun inboundNodes(): List<InboundNode> = emptyList()
+
     fun outboundNodes(): List<OutboundNode> = emptyList()
 }
 
@@ -57,6 +62,7 @@ enum class ConfigPreset {
     Default,
 }
 
+// TODO、CHECK：这玩意到底有没有用，没用清理掉得了
 class FeatureRegistry(
     features: List<InstalledFeature>,
 ) {

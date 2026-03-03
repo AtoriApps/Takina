@@ -1,4 +1,6 @@
-package org.atoriapps.takina.core.connections
+package org.atoriapps.takina.core.controlling
+
+import org.atoriapps.takina.core.connections.SecurityMode
 
 object ConnectionConfigPaths {
     const val HOST: String = "connection.host"
@@ -21,18 +23,7 @@ object ReconnectConfigPaths {
     const val MAX_ATTEMPTS: String = "reconnect.maxAttempts"
 }
 
-object ConnectionDefaults {
-    const val RESOURCE: String = "takina"
-    val SASL_MECHANISMS: List<String> = listOf("SCRAM-SHA-256", "SCRAM-SHA-1", "DIGEST-MD5", "PLAIN")
-    const val CONNECT_TIMEOUT_MILLIS: Int = 10_000
-    const val TRUST_ALL_CERTIFICATES: Boolean = false
-    val SECURITY_MODE: SecurityMode = SecurityMode.START_TLS
-}
-
-object ReconnectDefaults {
-    const val ENABLED: Boolean = true
-    const val DELAY_MILLIS: Long = 1_000L
-    const val FACTOR: Double = 2.0
-    const val JITTER: Double = 0.0
-    const val MAX_ATTEMPTS: Int = 5
+object ObservabilityConfigPaths {
+    const val SAMPLING: String = "observability.sampling"
+    const val ALERT_THRESHOLD: String = "observability.alertThreshold"
 }

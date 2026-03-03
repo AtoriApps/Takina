@@ -3,6 +3,7 @@ package org.atoriapps.takina.core.request
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.TakinaResult
 import org.atoriapps.takina.core.utils.FunctionalUtils
+import org.atoriapps.takina.core.xml.XmlElement
 import kotlin.time.Clock
 
 data class MessageRequest(
@@ -39,7 +40,7 @@ data class IqRequest(
     val from: BareJid?,
     val to: BareJid?,
     val type: String,
-    val payload: String,
+    val payload: XmlElement?,
     val id: String = FunctionalUtils.newTraceId("iq")
 )
 
@@ -67,8 +68,6 @@ interface RequestExecutor {
 
 @DslMarker
 annotation class RequestDsl
-
-// TODO、CHECK：这几个请求类型的Payload，要不要也变成XmlElement，而不是str？🤔
 
 @RequestDsl
 class MessageRequestDsl {
@@ -170,7 +169,7 @@ class IqRequestDsl {
     private var fromProvider: (() -> BareJid?)? = null
     private var toProvider: (() -> BareJid?)? = null
     private var typeProvider: (() -> String)? = null
-    private var payloadProvider: (() -> String)? = null
+    private var payloadProvider: (() -> XmlElement?)? = null
 
     var from: BareJid?
         get() = fromProvider?.invoke()
@@ -190,8 +189,8 @@ class IqRequestDsl {
             typeProvider = { value }
         }
 
-    var payload: String
-        get() = payloadProvider?.invoke() ?: ""
+    var payload: XmlElement?
+        get() = payloadProvider?.invoke()
         set(value) {
             payloadProvider = { value }
         }
@@ -208,7 +207,7 @@ class IqRequestDsl {
         typeProvider = provider
     }
 
-    fun payload(provider: () -> String) {
+    fun payload(provider: () -> XmlElement?) {
         payloadProvider = provider
     }
 

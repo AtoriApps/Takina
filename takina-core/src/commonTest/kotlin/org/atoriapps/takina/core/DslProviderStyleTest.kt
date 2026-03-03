@@ -3,6 +3,7 @@ package org.atoriapps.takina.core
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.connections.SecurityMode
 import org.atoriapps.takina.core.models.toBareJid
@@ -10,6 +11,7 @@ import org.atoriapps.takina.core.request.IqRequestDsl
 import org.atoriapps.takina.core.request.MessageRequestDsl
 import org.atoriapps.takina.core.request.PresenceRequestDsl
 import org.atoriapps.takina.core.request.PresenceShow
+import org.atoriapps.takina.core.xml.xml
 
 class DslProviderStyleTest {
     private val alice = "alice@example.com".toBareJid()
@@ -71,9 +73,16 @@ class DslProviderStyleTest {
             from { alice }
             to { bob }
             type { "get" }
-            payload { "<query xmlns='jabber:iq:version'/>" }
+            payload {
+                xml("query") {
+                    attr("xmlns", "jabber:iq:version")
+                    selfClosing()
+                }
+            }
         }.build()
         assertEquals("get", iq.type)
-        assertTrue(iq.payload.contains("jabber:iq:version"))
+        val payload = assertNotNull(iq.payload)
+        assertEquals("query", payload.name)
+        assertEquals("jabber:iq:version", payload.attribute("xmlns"))
     }
 }

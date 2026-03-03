@@ -6,14 +6,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.connections.AccountState
-import org.atoriapps.takina.core.connections.ConnectionConfigPaths
 import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.ConnectionState
-import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
 import org.atoriapps.takina.core.controlling.ApplyMode
+import org.atoriapps.takina.core.controlling.ConnectionConfigPaths
+import org.atoriapps.takina.core.controlling.ReconnectConfigPaths
 import org.atoriapps.takina.core.events.ConfigRejectedEvent
 import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
 import org.atoriapps.takina.core.events.RawFrameInboundEvent
@@ -26,6 +26,7 @@ import org.atoriapps.takina.core.pipeline.NodeResult
 import org.atoriapps.takina.core.pipeline.OutboundFrame
 import org.atoriapps.takina.core.pipeline.OutboundNode
 import org.atoriapps.takina.core.request.PresenceShow
+import org.atoriapps.takina.core.xml.xml
 
 class CoreSemanticsTest {
     private val alice = "alice@example.com".toBareJid()
@@ -200,7 +201,7 @@ class CoreSemanticsTest {
             takina.connect(alice)
             takina.request.message { to = bob; body = "m" }.send()
             takina.request.presence { to = bob; show = PresenceShow.Chat }.send()
-            takina.request.iq { to = bob; type = "get"; payload = "<ping/>" }.send()
+            takina.request.iq { to = bob; type = "get"; payload = xml("ping") { selfClosing() } }.send()
 
             assertEquals(3, sent.size)
             assertTrue(sent.all { it.startsWith("<!--marker-->") })

@@ -5,9 +5,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.controlling.ApplyMode
+import org.atoriapps.takina.core.controlling.ConnectionConfigPaths
+import org.atoriapps.takina.core.controlling.CoreConfigCatalog
+import org.atoriapps.takina.core.controlling.ReconnectConfigPaths
 import org.atoriapps.takina.core.controlling.UnifiedPolicy
-import org.atoriapps.takina.core.connections.ConnectionConfigPaths
-import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.features.FeatureRegistry
 import org.atoriapps.takina.core.features.InstalledFeature
 import org.atoriapps.takina.core.features.TakinaFeature
@@ -61,7 +62,11 @@ class UnifiedPolicyTest {
 
         val connectionRejected = unifiedPolicy.applyConfig(ConnectionConfigPaths.HOST, "next.example.com")
         assertFalse(connectionRejected.applied)
-        assertTrue(connectionRejected.rejectedReason?.contains("account-definition-only") == true)
+        assertEquals(connectionRejected.rejectedReason?.contains("account-definition-only"), true)
+
+        val unknownRejected = unifiedPolicy.applyConfig("unknown.path", true)
+        assertFalse(unknownRejected.applied)
+        assertEquals("Unknown config path: unknown.path", unknownRejected.rejectedReason)
     }
 
     @Test
@@ -83,6 +88,13 @@ class UnifiedPolicyTest {
         unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, null, Scope.Account(owner))
 
         assertEquals(2_000L, unifiedPolicy.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)))
+    }
+
+    @Test
+    fun `config values are coerced to canonical types`() {
+        val accepted = unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, 1500, Scope.Global)
+        assertTrue(accepted.applied)
+        assertEquals(1500L, unifiedPolicy.currentConfigOrDefault(CoreConfigCatalog.Reconnect.DELAY, Scope.Global))
     }
 
     private fun provider(featureId: String): TakinaFeatureProvider<TakinaFeature> = object : TakinaFeatureProvider<TakinaFeature> {

@@ -17,6 +17,7 @@ import org.atoriapps.takina.core.events.RawFrameInboundEvent
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.toBareJid
 import org.atoriapps.takina.core.models.TakinaResult
+import org.atoriapps.takina.core.xml.xml
 
 class XmppClientTest {
     @Test
@@ -37,7 +38,6 @@ class XmppClientTest {
                 }
             }
         }
-
 
         CoroutineScope(Dispatchers.Default).launch {
             takina.runtime.connectionStates.collect {
@@ -68,7 +68,10 @@ class XmppClientTest {
         val iqResult = takina.request.iq {
             to = target
             type = "get"
-            payload = "<query xmlns='jabber:iq:version'/>"
+            payload = xml("query") {
+                attr("xmlns", "jabber:iq:version")
+                selfClosing()
+            }
         }.send()
         assertTrue(iqResult is TakinaResult.Ok)
 

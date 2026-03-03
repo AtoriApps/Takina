@@ -6,13 +6,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import org.atoriapps.takina.core.connections.ConnectionConfig
-import org.atoriapps.takina.core.connections.ConnectionConfigPaths
 import org.atoriapps.takina.core.connections.ConnectionState
-import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
 import org.atoriapps.takina.core.controlling.ApplyMode
+import org.atoriapps.takina.core.controlling.ConnectionConfigPaths
+import org.atoriapps.takina.core.controlling.ReconnectConfigPaths
 import org.atoriapps.takina.core.features.TakinaFeature
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope

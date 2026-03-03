@@ -9,11 +9,9 @@ enum class SecurityMode {
 
     val defaultPort: Int
         get() = when (this) {
-            DIRECT_TLS -> 5223
+            DIRECT_TLS -> ConnectionDefaults.PORT_DIRECT_TLS
 
-            START_TLS -> 5222
-
-            PLAIN -> 5222
+            START_TLS , PLAIN -> ConnectionDefaults.PORT_START_TLS_AND_PLAIN
         }
 }
 
@@ -27,3 +25,14 @@ data class ConnectionConfig(
     val connectTimeoutMillis: Int = ConnectionDefaults.CONNECT_TIMEOUT_MILLIS,
     val trustAllCertificates: Boolean = ConnectionDefaults.TRUST_ALL_CERTIFICATES,
 )
+
+
+object ConnectionDefaults {
+    const val RESOURCE: String = "takina"
+    val SASL_MECHANISMS: List<String> = listOf("SCRAM-SHA-256", "SCRAM-SHA-1", "DIGEST-MD5", "PLAIN")
+    const val CONNECT_TIMEOUT_MILLIS: Int = 10_000
+    const val TRUST_ALL_CERTIFICATES: Boolean = false
+    val SECURITY_MODE: SecurityMode = SecurityMode.START_TLS
+    const val PORT_START_TLS_AND_PLAIN = 5222
+    const val PORT_DIRECT_TLS = 5223
+}

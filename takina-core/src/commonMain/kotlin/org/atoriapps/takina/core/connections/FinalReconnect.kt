@@ -1,6 +1,7 @@
 package org.atoriapps.takina.core.connections
 
 import kotlinx.coroutines.delay
+import org.atoriapps.takina.core.controlling.CoreConfigCatalog
 import org.atoriapps.takina.core.models.BareJid
 import kotlin.math.min
 import kotlin.math.pow
@@ -19,11 +20,11 @@ interface SmRecoveryCoordinator {
 }
 
 data class ReconnectPolicy(
-    val enabled: Boolean = ReconnectDefaults.ENABLED,
-    val delayMillis: Long = ReconnectDefaults.DELAY_MILLIS,
-    val factor: Double = ReconnectDefaults.FACTOR,
-    val jitter: Double = ReconnectDefaults.JITTER,
-    val maxAttempts: Int = ReconnectDefaults.MAX_ATTEMPTS,
+    val enabled: Boolean = CoreConfigCatalog.Reconnect.ENABLED.default,
+    val delayMillis: Long = CoreConfigCatalog.Reconnect.DELAY.default,
+    val factor: Double = CoreConfigCatalog.Reconnect.FACTOR.default,
+    val jitter: Double = CoreConfigCatalog.Reconnect.JITTER.default,
+    val maxAttempts: Int = CoreConfigCatalog.Reconnect.MAX_ATTEMPTS.default,
 )
 
 data class ReconnectOutcome(

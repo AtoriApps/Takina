@@ -1,7 +1,5 @@
 package org.atoriapps.takina.core.controlling
 
-import org.atoriapps.takina.core.connections.ConnectionConfigPaths
-import org.atoriapps.takina.core.connections.ReconnectConfigPaths
 import org.atoriapps.takina.core.features.FeatureRegistry
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
@@ -32,7 +30,7 @@ data class NodeActivationState(
 
 class UnifiedPolicy(
     private val featureRegistry: FeatureRegistry,
-    private val configMetaCatalog: Map<String, ConfigMeta> = CoreConfigMetaCatalog.all,
+    private val configCatalog: Map<String, ConfigSpec<*>> = CoreConfigCatalog.all,
 ) {
     private data object UnsetMarker
 
@@ -58,49 +56,68 @@ class UnifiedPolicy(
 
     // CHECK：NULL遮蔽？？
     fun applyConfig(path: String, value: Any?, scope: Scope = Scope.Global): ConfigChangeResult {
-        // CHECK：确保只阻止用户设定，不阻止内部合并（有的话）
-        if (ConnectionConfigPaths.isConnectionPath(path)) return ConfigChangeResult(
+        val spec = configCatalog[path] ?: return ConfigChangeResult(
             path = path,
             applied = false,
-            applyMode = ApplyMode.BUILD_TIME_IMMUTABLE,
-            rejectedReason = "$path is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
+            applyMode = ApplyMode.IMMEDIATE,
+            rejectedReason = "Unknown config path: $path",
         )
 
-        val meta = configMetaCatalog[path] ?: ConfigMeta(path, ApplyMode.IMMEDIATE, mutable = true)
-
-        // TODO：这个只有几个，最好统一，搞个类似这样的{Key(or Path),Default,Validator}
-        validateValue(path, value)?.let { reason ->
+        if (!spec.supports(scope)) {
             return ConfigChangeResult(
                 path = path,
                 applied = false,
-                applyMode = meta.applyMode,
-                rejectedReason = reason,
+                applyMode = spec.applyMode,
+                rejectedReason = "$path does not support scope ${scope.kind}",
             )
         }
 
-        if (!meta.mutable || meta.applyMode == ApplyMode.BUILD_TIME_IMMUTABLE) return ConfigChangeResult(
-            path = path,
-            applied = false,
-            applyMode = ApplyMode.BUILD_TIME_IMMUTABLE,
-            rejectedReason = "Config is build-time immutable",
-        )
+        if (!spec.mutable || spec.applyMode == ApplyMode.BUILD_TIME_IMMUTABLE) {
+            return ConfigChangeResult(
+                path = path,
+                applied = false,
+                applyMode = ApplyMode.BUILD_TIME_IMMUTABLE,
+                rejectedReason = spec.immutableReason,
+            )
+        }
 
-        return when (meta.applyMode) {
+        val normalized = if (value == null) null else {
+            when (val result = spec.normalize(value)) {
+                is ConfigNormalizeResult.Accepted -> result.value
+                is ConfigNormalizeResult.Rejected -> {
+                    return ConfigChangeResult(
+                        path = path,
+                        applied = false,
+                        applyMode = spec.applyMode,
+                        rejectedReason = result.reason,
+                    )
+                }
+            }
+        }
+
+        return when (spec.applyMode) {
             ApplyMode.IMMEDIATE -> {
-                if (value == null) activeConfig.unsetScoped(path, scope)
-                else activeConfig.setScoped(path, scope, value)
-                ConfigChangeResult(path = path, applied = true, applyMode = meta.applyMode)
+                if (normalized == null) activeConfig.unsetScoped(path, scope)
+                else activeConfig.setScoped(path, scope, normalized)
+                ConfigChangeResult(path = path, applied = true, applyMode = spec.applyMode)
             }
 
             ApplyMode.NEXT_ITEM -> {
-                nextItemConfig.setScoped(path, scope, value ?: UnsetMarker)
-                ConfigChangeResult(path = path, applied = false, applyMode = meta.applyMode)
+                nextItemConfig.setScoped(path, scope, normalized ?: UnsetMarker)
+                ConfigChangeResult(path = path, applied = false, applyMode = spec.applyMode)
             }
 
             ApplyMode.NEXT_CONNECTION -> {
-                nextConnectionConfig.setScoped(path, scope, value ?: UnsetMarker)
-                ConfigChangeResult(path = path, applied = false, applyMode = meta.applyMode)
+                nextConnectionConfig.setScoped(path, scope, normalized ?: UnsetMarker)
+                ConfigChangeResult(path = path, applied = false, applyMode = spec.applyMode)
             }
+
+            ApplyMode.BUILD_TIME_IMMUTABLE -> ConfigChangeResult(
+                path = path,
+                applied = false,
+                applyMode = ApplyMode.BUILD_TIME_IMMUTABLE,
+                rejectedReason = spec.immutableReason,
+            )
         }
     }
 
@@ -125,6 +142,14 @@ class UnifiedPolicy(
         }
         return null
     }
+
+    fun <T : Any> currentConfig(spec: ConfigSpec<T>, scope: Scope = Scope.Global): T? {
+        val raw = currentConfig(spec.path, scope) ?: return spec.defaultValue
+        return spec.decode(raw) ?: spec.defaultValue
+    }
+
+    fun <T : Any> currentConfigOrDefault(spec: ConfigSpec<T>, scope: Scope = Scope.Global): T =
+        currentConfig(spec, scope) ?: spec.default
 
     fun describeActiveFeatures(scope: Scope): List<FeatureActivation> = featureRegistry.all().map { feature ->
         val explained = isFeatureEnabled(feature.provider, scope)
@@ -282,15 +307,6 @@ class UnifiedPolicy(
         val scoped = this[path] ?: return
         scoped.remove(scope)
         if (scoped.isEmpty()) remove(path)
-    }
-
-    private fun validateValue(path: String, value: Any?): String? = when (path) {
-        ReconnectConfigPaths.ENABLED -> if (value == null || value is Boolean) null else "${ReconnectConfigPaths.ENABLED} must be Boolean"
-        ReconnectConfigPaths.DELAY -> if (value == null || (value is Number && value.toLong() >= 0L)) null else "${ReconnectConfigPaths.DELAY} must be Number >= 0"
-        ReconnectConfigPaths.FACTOR -> if (value == null || (value is Number && value.toDouble() > 0.0)) null else "${ReconnectConfigPaths.FACTOR} must be Number > 0"
-        ReconnectConfigPaths.JITTER -> if (value == null || (value is Number && value.toDouble() >= 0.0 && value.toDouble() <= 1.0)) null else "${ReconnectConfigPaths.JITTER} must be Number in [0, 1]"
-        ReconnectConfigPaths.MAX_ATTEMPTS -> if (value == null || (value is Number && value.toInt() >= 0)) null else "${ReconnectConfigPaths.MAX_ATTEMPTS} must be Number >= 0"
-        else -> null
     }
 
     private fun mergeScopedConfig(from: Map<String, MutableMap<Scope, Any>>, into: MutableMap<String, MutableMap<Scope, Any>>, ) {

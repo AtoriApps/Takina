@@ -1,9 +1,8 @@
 package org.atoriapps.takina.core
 
-import org.atoriapps.takina.core.connections.ConnectionConfigPaths
 import org.atoriapps.takina.core.connections.ConnectionDefaults
 import org.atoriapps.takina.core.connections.SecurityMode
-import org.atoriapps.takina.core.connections.ReconnectConfigPaths
+import org.atoriapps.takina.core.controlling.CoreConfigCatalog
 import org.atoriapps.takina.core.features.InstalledFeature
 import org.atoriapps.takina.core.features.TakinaFeature
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
@@ -371,23 +370,24 @@ class ConfigDsl internal constructor(
     private val normalizeScope: (Scope) -> Scope = { it },
 ) {
     fun set(path: String, value: Any?, scope: Scope? = null) {
-        require(!ConnectionConfigPaths.isConnectionPath(path)) { "$path is account-definition-only. Configure it via addAccount { connection { ... } } or account properties." }
+        val spec = requireNotNull(CoreConfigCatalog.spec(path)) { "Unknown config path: $path" }
+        require(CoreConfigCatalog.isRuntimeSettable(path)) { spec.immutableReason }
         sink(path, value, scope?.let(normalizeScope))
     }
 
     fun reconnect(init: ReconnectDsl.() -> Unit) {
         val dsl = ReconnectDsl().apply(init)
-        dsl.enabled?.let { set(ReconnectConfigPaths.ENABLED, it) }
-        dsl.delayMillis?.let { set(ReconnectConfigPaths.DELAY, it) }
-        dsl.factor?.let { set(ReconnectConfigPaths.FACTOR, it) }
-        dsl.jitter?.let { set(ReconnectConfigPaths.JITTER, it) }
-        dsl.maxAttempts?.let { set(ReconnectConfigPaths.MAX_ATTEMPTS, it) }
+        dsl.enabled?.let { set(CoreConfigCatalog.Reconnect.ENABLED.path, it) }
+        dsl.delayMillis?.let { set(CoreConfigCatalog.Reconnect.DELAY.path, it) }
+        dsl.factor?.let { set(CoreConfigCatalog.Reconnect.FACTOR.path, it) }
+        dsl.jitter?.let { set(CoreConfigCatalog.Reconnect.JITTER.path, it) }
+        dsl.maxAttempts?.let { set(CoreConfigCatalog.Reconnect.MAX_ATTEMPTS.path, it) }
     }
 
     fun observability(init: ObservabilityDsl.() -> Unit) {
         val dsl = ObservabilityDsl().apply(init)
-        dsl.sampling?.let { set("observability.sampling", it) }
-        dsl.alertThreshold?.let { set("observability.alertThreshold", it) }
+        dsl.sampling?.let { set(CoreConfigCatalog.Observability.SAMPLING.path, it) }
+        dsl.alertThreshold?.let { set(CoreConfigCatalog.Observability.ALERT_THRESHOLD.path, it) }
     }
 
     // TODO：我加密配置呢？即草案文档里的encryptionDsl

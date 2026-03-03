@@ -2,73 +2,18 @@ package org.atoriapps.takina.core
 
 import kotlinx.coroutines.runBlocking
 import org.atoriapps.takina.core.bootstrap.FeatureTopologyValidator
-import org.atoriapps.takina.core.connections.AccountState
-import org.atoriapps.takina.core.connections.ConnectionConfig
-import org.atoriapps.takina.core.connections.ConnectionDefaults
-import org.atoriapps.takina.core.connections.ConnectionState
-import org.atoriapps.takina.core.connections.ConnectionStateMachine
-import org.atoriapps.takina.core.connections.FinalReconnect
-import org.atoriapps.takina.core.connections.ReconnectPolicy
-import org.atoriapps.takina.core.connections.ReconnectDefaults
-import org.atoriapps.takina.core.connections.ReconnectConfigPaths
-import org.atoriapps.takina.core.connections.XmppTransport
-import org.atoriapps.takina.core.connections.XmppTransportCallbacks
-import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
+import org.atoriapps.takina.core.connections.*
+import org.atoriapps.takina.core.controlling.CoreConfigCatalog
 import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.error.ErrorDomain
 import org.atoriapps.takina.core.error.TakinaErrors
-import org.atoriapps.takina.core.events.AccountAddedEvent
-import org.atoriapps.takina.core.events.AccountConfigChangedEvent
-import org.atoriapps.takina.core.events.AccountRemovedEvent
-import org.atoriapps.takina.core.events.ConfigAppliedEvent
-import org.atoriapps.takina.core.events.ConfigApplyDeferredEvent
-import org.atoriapps.takina.core.events.ConfigRejectedEvent
-import org.atoriapps.takina.core.events.ConnectionStateChangedEvent
-import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
-import org.atoriapps.takina.core.events.FeatureStateChangedEvent
-import org.atoriapps.takina.core.events.FrameInboundParseFailedEvent
-import org.atoriapps.takina.core.events.GlobalConfigChangedEvent
-import org.atoriapps.takina.core.events.IqReceivedEvent
-import org.atoriapps.takina.core.events.MessageReceivedEvent
-import org.atoriapps.takina.core.events.MessageSendFailedEvent
-import org.atoriapps.takina.core.events.MessageSentEvent
-import org.atoriapps.takina.core.events.PresenceReceivedEvent
-import org.atoriapps.takina.core.events.RawFrameInboundEvent
-import org.atoriapps.takina.core.events.ReconnectExhaustedEvent
-import org.atoriapps.takina.core.events.ReconnectScheduledEvent
-import org.atoriapps.takina.core.events.RequestFailedEvent
-import org.atoriapps.takina.core.events.SessionReadyEvent
-import org.atoriapps.takina.core.events.TakinaEventBus
-import org.atoriapps.takina.core.events.TakinaShutdownCompletedEvent
-import org.atoriapps.takina.core.events.TakinaStartedEvent
-import org.atoriapps.takina.core.events.UnexpectedDisconnectedEvent
-import org.atoriapps.takina.core.events.UnknownFrameInboundEvent
-import org.atoriapps.takina.core.features.ApiProvidingFeature
-import org.atoriapps.takina.core.features.ConfigPreset
-import org.atoriapps.takina.core.features.FeatureApi
-import org.atoriapps.takina.core.features.FeaturePreset
-import org.atoriapps.takina.core.features.FeatureRegistry
-import org.atoriapps.takina.core.features.InstalledFeature
-import org.atoriapps.takina.core.features.TakinaFeature
-import org.atoriapps.takina.core.features.TakinaFeatureProvider
+import org.atoriapps.takina.core.events.*
+import org.atoriapps.takina.core.features.*
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
-import org.atoriapps.takina.core.pipeline.InboundClassification
-import org.atoriapps.takina.core.pipeline.InboundFrame
-import org.atoriapps.takina.core.pipeline.OutboundClassification
-import org.atoriapps.takina.core.pipeline.OutboundFrame
-import org.atoriapps.takina.core.pipeline.PipelineRuntime
-import org.atoriapps.takina.core.pipeline.classifyInbound
-import org.atoriapps.takina.core.request.IqOutcome
-import org.atoriapps.takina.core.request.IqRequest
-import org.atoriapps.takina.core.request.MessageOutcome
-import org.atoriapps.takina.core.request.MessageRequest
-import org.atoriapps.takina.core.request.MessageRequestDsl
-import org.atoriapps.takina.core.request.PresenceOutcome
-import org.atoriapps.takina.core.request.PresenceRequest
-import org.atoriapps.takina.core.request.RequestExecutor
-import org.atoriapps.takina.core.request.TakinaRequestApi
 import org.atoriapps.takina.core.models.TakinaResult
+import org.atoriapps.takina.core.pipeline.*
+import org.atoriapps.takina.core.request.*
 import org.atoriapps.takina.core.runtime.TakinaRuntime
 import org.atoriapps.takina.core.utils.ParsingUtils.toBareJidOrNull
 import org.atoriapps.takina.core.xml.XmlParser
@@ -416,18 +361,15 @@ internal class CoreTakina(
         unifiedPolicy.onNextItemBoundary()
         val owner = resolveOwner(request.from)
         val transport = requireConnectedTransport(owner)
-        val payloadElement = request.payload.trim().takeIf { it.isNotEmpty() }?.let { XmlParser.parseElementOrNull(it) }
-        if (request.payload.isNotBlank() && payloadElement == null) return TakinaResult.Err(TakinaErrors.of(ErrorDomain.CONFIG, 302, "IQ payload must be valid XML element", retryable = false))
         val raw = XmlWriter.render(xml("iq") {
             attr("id", request.id)
             attr("type", request.type)
             attr("to", request.to?.toString())
             attr("from", transport.boundJid)
-            if (payloadElement != null) node(payloadElement)
+            request.payload?.let { node(it) }
         })
         val scope = Scope.Account(owner)
-        val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope)
-            ?: return TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 203, "Outbound iq dropped", retryable = false))
+        val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope) ?: return TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 203, "Outbound iq dropped", retryable = false))
 
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = "iq"))
@@ -487,11 +429,11 @@ internal class CoreTakina(
         )
 
         val policy = ReconnectPolicy(
-            enabled = unifiedPolicy.currentConfig(ReconnectConfigPaths.ENABLED, Scope.Account(owner)) as? Boolean ?: ReconnectDefaults.ENABLED,
-            delayMillis = unifiedPolicy.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)) as? Long ?: ReconnectDefaults.DELAY_MILLIS,
-            factor = unifiedPolicy.currentConfig(ReconnectConfigPaths.FACTOR, Scope.Account(owner)) as? Double ?: ReconnectDefaults.FACTOR,
-            jitter = unifiedPolicy.currentConfig(ReconnectConfigPaths.JITTER, Scope.Account(owner)) as? Double ?: ReconnectDefaults.JITTER,
-            maxAttempts = unifiedPolicy.currentConfig(ReconnectConfigPaths.MAX_ATTEMPTS, Scope.Account(owner)) as? Int ?: ReconnectDefaults.MAX_ATTEMPTS,
+            enabled = unifiedPolicy.currentConfigOrDefault(CoreConfigCatalog.Reconnect.ENABLED, Scope.Account(owner)),
+            delayMillis = unifiedPolicy.currentConfigOrDefault(CoreConfigCatalog.Reconnect.DELAY, Scope.Account(owner)),
+            factor = unifiedPolicy.currentConfigOrDefault(CoreConfigCatalog.Reconnect.FACTOR, Scope.Account(owner)),
+            jitter = unifiedPolicy.currentConfigOrDefault(CoreConfigCatalog.Reconnect.JITTER, Scope.Account(owner)),
+            maxAttempts = unifiedPolicy.currentConfigOrDefault(CoreConfigCatalog.Reconnect.MAX_ATTEMPTS, Scope.Account(owner)),
         )
 
         val outcome = finalReconnect.perform(owner, policy, authHardFailure = authHardFailure)
@@ -617,11 +559,9 @@ internal class CoreTakina(
     private fun applyConfigPreset(configPreset: ConfigPreset) {
         when (configPreset) {
             ConfigPreset.Default -> {
-                unifiedPolicy.applyConfig(ReconnectConfigPaths.ENABLED, ReconnectDefaults.ENABLED, Scope.Preset)
-                unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, ReconnectDefaults.DELAY_MILLIS, Scope.Preset)
-                unifiedPolicy.applyConfig(ReconnectConfigPaths.FACTOR, ReconnectDefaults.FACTOR, Scope.Preset)
-                unifiedPolicy.applyConfig(ReconnectConfigPaths.JITTER, ReconnectDefaults.JITTER, Scope.Preset)
-                unifiedPolicy.applyConfig(ReconnectConfigPaths.MAX_ATTEMPTS, ReconnectDefaults.MAX_ATTEMPTS, Scope.Preset)
+                CoreConfigCatalog.presetDefaults.forEach { (spec, defaultValue) ->
+                    unifiedPolicy.applyConfig(spec.path, defaultValue, Scope.Preset)
+                }
             }
         }
     }

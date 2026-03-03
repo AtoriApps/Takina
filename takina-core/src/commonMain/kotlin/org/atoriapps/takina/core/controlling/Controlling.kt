@@ -2,6 +2,13 @@ package org.atoriapps.takina.core.controlling
 
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.ScopeKind
+import org.atoriapps.takina.core.utils.ValueCoercingUtils.booleanValueOrNull
+import org.atoriapps.takina.core.utils.ValueCoercingUtils.doubleValueOrNull
+import org.atoriapps.takina.core.utils.ValueCoercingUtils.intValueOrNull
+import org.atoriapps.takina.core.utils.ValueCoercingUtils.longValueOrNull
+import org.atoriapps.takina.core.utils.ValueCoercingUtils.securityModeValueOrNull
+import org.atoriapps.takina.core.utils.ValueCoercingUtils.stringListValueOrNull
+import org.atoriapps.takina.core.utils.ValueCoercingUtils.stringValueOrNull
 
 enum class ApplyMode {
     IMMEDIATE,
@@ -109,7 +116,7 @@ object CoreConfigCatalog {
             mutable = false,
             expectedType = "String",
             immutableReason = "${ConnectionConfigPaths.HOST} is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
-            coerce = ::stringValue,
+            coerce = ::stringValueOrNull,
         )
         val PORT = ConfigSpec(
             path = ConnectionConfigPaths.PORT,
@@ -117,7 +124,7 @@ object CoreConfigCatalog {
             mutable = false,
             expectedType = "Int > 0",
             immutableReason = "${ConnectionConfigPaths.PORT} is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
-            coerce = ::intValue,
+            coerce = ::intValueOrNull,
             validate = { value -> if (value > 0) null else "${ConnectionConfigPaths.PORT} must be > 0" },
         )
         val SECURITY_MODE = ConfigSpec(
@@ -126,7 +133,7 @@ object CoreConfigCatalog {
             mutable = false,
             expectedType = "SecurityMode",
             immutableReason = "${ConnectionConfigPaths.SECURITY_MODE} is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
-            coerce = ::securityModeValue,
+            coerce = ::securityModeValueOrNull,
         )
         val RESOURCE = ConfigSpec(
             path = ConnectionConfigPaths.RESOURCE,
@@ -134,7 +141,7 @@ object CoreConfigCatalog {
             mutable = false,
             expectedType = "String",
             immutableReason = "${ConnectionConfigPaths.RESOURCE} is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
-            coerce = ::stringValue,
+            coerce = ::stringValueOrNull,
         )
         val AUTH_SASL = ConfigSpec(
             path = ConnectionConfigPaths.AUTH_SASL,
@@ -142,7 +149,7 @@ object CoreConfigCatalog {
             mutable = false,
             expectedType = "List<String>",
             immutableReason = "${ConnectionConfigPaths.AUTH_SASL} is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
-            coerce = ::stringListValue,
+            coerce = ::stringListValueOrNull,
         )
         val TIMEOUT_HANDSHAKE = ConfigSpec(
             path = ConnectionConfigPaths.TIMEOUT_HANDSHAKE,
@@ -150,7 +157,7 @@ object CoreConfigCatalog {
             mutable = false,
             expectedType = "Int > 0",
             immutableReason = "${ConnectionConfigPaths.TIMEOUT_HANDSHAKE} is account-definition-only. Configure connection params in addAccount { connection { ... } }.",
-            coerce = ::intValue,
+            coerce = ::intValueOrNull,
             validate = { value -> if (value > 0) null else "${ConnectionConfigPaths.TIMEOUT_HANDSHAKE} must be > 0" },
         )
     }
@@ -164,7 +171,7 @@ object CoreConfigCatalog {
             defaultValue = true,
             hasDefault = true,
             allowedScopes = accountWideScopes,
-            coerce = ::booleanValue,
+            coerce = ::booleanValueOrNull,
         )
         val DELAY = ConfigSpec(
             path = ReconnectConfigPaths.DELAY,
@@ -174,7 +181,7 @@ object CoreConfigCatalog {
             defaultValue = 1_000L,
             hasDefault = true,
             allowedScopes = accountWideScopes,
-            coerce = ::longValue,
+            coerce = ::longValueOrNull,
             validate = { value -> if (value >= 0L) null else "${ReconnectConfigPaths.DELAY} must be >= 0" },
         )
         val FACTOR = ConfigSpec(
@@ -185,7 +192,7 @@ object CoreConfigCatalog {
             defaultValue = 2.0,
             hasDefault = true,
             allowedScopes = accountWideScopes,
-            coerce = ::doubleValue,
+            coerce = ::doubleValueOrNull,
             validate = { value -> if (value > 0.0) null else "${ReconnectConfigPaths.FACTOR} must be > 0" },
         )
         val JITTER = ConfigSpec(
@@ -196,7 +203,7 @@ object CoreConfigCatalog {
             defaultValue = 0.0,
             hasDefault = true,
             allowedScopes = accountWideScopes,
-            coerce = ::doubleValue,
+            coerce = ::doubleValueOrNull,
             validate = { value ->
                 if (value in 0.0..1.0) null
                 else "${ReconnectConfigPaths.JITTER} must be in [0, 1]"
@@ -210,7 +217,7 @@ object CoreConfigCatalog {
             defaultValue = 5,
             hasDefault = true,
             allowedScopes = accountWideScopes,
-            coerce = ::intValue,
+            coerce = ::intValueOrNull,
             validate = { value -> if (value >= 0) null else "${ReconnectConfigPaths.MAX_ATTEMPTS} must be >= 0" },
         )
     }
@@ -224,7 +231,7 @@ object CoreConfigCatalog {
             defaultValue = 1.0,
             hasDefault = true,
             allowedScopes = accountWideScopes,
-            coerce = ::doubleValue,
+            coerce = ::doubleValueOrNull,
             validate = { value ->
                 if (value in 0.0..1.0) null
                 else "${ObservabilityConfigPaths.SAMPLING} must be in [0, 1]"
@@ -238,7 +245,7 @@ object CoreConfigCatalog {
             defaultValue = 0.9,
             hasDefault = true,
             allowedScopes = accountWideScopes,
-            coerce = ::doubleValue,
+            coerce = ::doubleValueOrNull,
             validate = { value ->
                 if (value in 0.0..1.0) null
                 else "${ObservabilityConfigPaths.ALERT_THRESHOLD} must be in [0, 1]"
@@ -270,40 +277,7 @@ object CoreConfigCatalog {
         spec to spec.defaultValue
     }
 
-    fun spec(path: String): ConfigSpec<*>? = all[path]
+    fun getSpec(path: String): ConfigSpec<*>? = all[path]
 
-    fun isRuntimeSettable(path: String): Boolean = spec(path)?.let { it.mutable && it.applyMode != ApplyMode.BUILD_TIME_IMMUTABLE } == true
-
-    private fun booleanValue(value: Any): Boolean? = value as? Boolean
-
-    private fun stringValue(value: Any): String? = value as? String
-
-    private fun securityModeValue(value: Any): org.atoriapps.takina.core.connections.SecurityMode? =
-        value as? org.atoriapps.takina.core.connections.SecurityMode
-
-    private fun stringListValue(value: Any): List<String>? {
-        val list = value as? List<*> ?: return null
-        if (list.any { it !is String }) return null
-        @Suppress("UNCHECKED_CAST")
-        return list as List<String>
-    }
-
-    private fun longValue(value: Any): Long? = when (value) {
-        is Byte, is Short, is Int, is Long -> (value as Number).toLong()
-        is Float -> if (value.isFinite() && value % 1f == 0f) value.toLong() else null
-        is Double -> if (value.isFinite() && value % 1.0 == 0.0) value.toLong() else null
-        else -> null
-    }
-
-    private fun intValue(value: Any): Int? {
-        val longValue = longValue(value) ?: return null
-        return if (longValue in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) longValue.toInt() else null
-    }
-
-    private fun doubleValue(value: Any): Double? = when (value) {
-        is Byte, is Short, is Int, is Long -> (value as Number).toDouble()
-        is Float -> if (value.isFinite()) value.toDouble() else null
-        is Double -> if (value.isFinite()) value else null
-        else -> null
-    }
+    fun isRuntimeSettable(path: String): Boolean = getSpec(path)?.let { it.mutable && it.applyMode != ApplyMode.BUILD_TIME_IMMUTABLE } == true
 }

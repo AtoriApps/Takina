@@ -14,12 +14,12 @@ val Jid.bareJid: BareJid
         is FullJid -> bare
     }
 
-fun Jid.copy(): Jid = createJid(local = local, domain = domain, resource = resource)
-fun Jid.copy(resource: String?): Jid = createJid(local = local, domain = domain, resource = resource)
+fun Jid.copy(resource: String? = this.resource): Jid = createJid(local = local, domain = domain, resource = resource)
 
 fun String.toJid(): Jid = parseJid(this).toJid()
 fun String.toFullJid(): FullJid = parseJid(this).toFullJid()
 fun String.toBareJid(): BareJid = parseJid(this).toBareJid()
+fun String.toBareJidOrNull(): BareJid? = runCatching { toBareJid() }.getOrNull()
 
 fun createJid(local: String, domain: String, resource: String? = null): Jid {
     val parsed = ParsedJid(
@@ -86,12 +86,12 @@ private fun normalizeDomain(value: String): String {
 
 private fun normalizeResource(value: String?) = if (value == null) null
 else if (value.isEmpty()) throw JidFormatException("resource cannot be empty")
-else  if (value.any { it.isControlCharacter() }) throw JidFormatException("resource contains control characters")
+else if (value.any { it.isControlCharacter() }) throw JidFormatException("resource contains control characters")
 else value
 
 private fun Char.isControlCharacter(): Boolean = code in 0x00..0x1F || code == 0x7F
 
-class BareJid(override val local: String, override val domain: String, ) : Jid {
+class BareJid(override val local: String, override val domain: String) : Jid {
     init {
         normalizeLocalPart(local)
         require(domain == normalizeDomain(domain)) { "domain must be normalized; use toBareJid/createBareJid for automatic normalization" }

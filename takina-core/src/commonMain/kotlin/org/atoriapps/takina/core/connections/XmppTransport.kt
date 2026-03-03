@@ -4,7 +4,7 @@ internal interface XmppTransportCallbacks {
     suspend fun onStateChanged(to: ConnectionState)
     suspend fun onFrame(frame: String)
     suspend fun onFrameParseFailed(raw: String, reason: String)
-    suspend fun onClosed(reason: String?)
+    suspend fun onClosed(reason: String?, authHardFailure: Boolean)
 }
 
 internal interface XmppTransport {

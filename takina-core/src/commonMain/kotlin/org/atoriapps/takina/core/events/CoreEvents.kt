@@ -17,16 +17,16 @@ data class TakinaShutdownCompletedEvent(val reason: String = "shutdown") : Takin
     companion object : TakinaEventProvider<TakinaShutdownCompletedEvent>(TakinaShutdownCompletedEvent::class)
 }
 
+data class GlobalConfigChangedEvent(val path: String) : TakinaEvent("GlobalConfigChangedEvent") {
+    companion object : TakinaEventProvider<GlobalConfigChangedEvent>(GlobalConfigChangedEvent::class)
+}
+
 data class AccountAddedEvent(val owner: BareJid) : TakinaEvent("AccountAddedEvent") {
     companion object : TakinaEventProvider<AccountAddedEvent>(AccountAddedEvent::class)
 }
 
 data class AccountRemovedEvent(val owner: BareJid) : TakinaEvent("AccountRemovedEvent") {
     companion object : TakinaEventProvider<AccountRemovedEvent>(AccountRemovedEvent::class)
-}
-
-data class GlobalConfigChangedEvent(val path: String) : TakinaEvent("GlobalConfigChangedEvent") {
-    companion object : TakinaEventProvider<GlobalConfigChangedEvent>(GlobalConfigChangedEvent::class)
 }
 
 data class AccountConfigChangedEvent(val owner: BareJid, val path: String) : TakinaEvent("AccountConfigChangedEvent") {

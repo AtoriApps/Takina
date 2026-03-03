@@ -29,7 +29,10 @@ data class ConnectionConfig(
 
 object ConnectionDefaults {
     const val RESOURCE: String = "takina"
+
+    // HACK：不应静态假设所有平台能力一致，没准要变成expect/actual。最终或是平台能力与用户偏好的交集
     val SASL_MECHANISMS: List<String> = listOf("SCRAM-SHA-256", "SCRAM-SHA-1", "DIGEST-MD5", "PLAIN")
+
     const val CONNECT_TIMEOUT_MILLIS: Int = 10_000
     const val TRUST_ALL_CERTIFICATES: Boolean = false
     val SECURITY_MODE: SecurityMode = SecurityMode.START_TLS

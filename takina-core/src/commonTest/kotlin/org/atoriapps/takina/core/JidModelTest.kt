@@ -12,8 +12,10 @@ import org.atoriapps.takina.core.models.bareJid
 import org.atoriapps.takina.core.models.copy
 import org.atoriapps.takina.core.models.createFullJid
 import org.atoriapps.takina.core.models.toBareJid
+import org.atoriapps.takina.core.models.toBareJidOrNull
 import org.atoriapps.takina.core.models.toFullJid
 import org.atoriapps.takina.core.models.toJid
+import kotlin.test.assertNull
 
 class JidModelTest {
     @Test
@@ -52,5 +54,12 @@ class JidModelTest {
         assertFailsWith<JidFormatException> { "bad".toBareJid() }
         assertFailsWith<JidFormatException> { "alice@example.com/".toJid() }
         assertFailsWith<JidFormatException> { createFullJid(local = "alice", domain = "example.com", resource = "\u0000") }
+    }
+
+    @Test
+    fun `toBareJidOrNull parses bare and full jid`() {
+        assertEquals("alice@example.com", "alice@example.com".toBareJidOrNull()?.toString())
+        assertEquals("alice@example.com", "alice@example.com/mobile".toBareJidOrNull()?.toString())
+        assertNull("bad".toBareJidOrNull())
     }
 }

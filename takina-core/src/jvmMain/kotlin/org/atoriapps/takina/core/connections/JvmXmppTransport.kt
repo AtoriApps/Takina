@@ -12,7 +12,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.security.MessageDigest
 import java.util.Base64
 import javax.security.auth.callback.CallbackHandler
 import javax.security.auth.callback.NameCallback
@@ -29,6 +28,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import org.atoriapps.takina.core.error.ErrorDomain
 import org.atoriapps.takina.core.error.TakinaErrors
 import org.atoriapps.takina.core.error.TakinaFailureException
+import org.atoriapps.takina.core.utils.CodecUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.JvmXmlFrameReader
 import org.atoriapps.takina.core.xml.XmlParser
@@ -117,6 +117,13 @@ internal class JvmXmppTransport(
 
             startReadLoop()
         } catch (t: Throwable) {
+            runCatching {
+                closeInternal(
+                    reason = "connect-failed:${t.message}",
+                    notifyDisconnected = false,
+                    authHardFailure = t.isAuthHardFailure(),
+                )
+            }
             if (t is CancellationException || t is TakinaFailureException) throw t
             fail(
                 domain = ErrorDomain.TRANSPORT,
@@ -165,7 +172,8 @@ internal class JvmXmppTransport(
     private suspend fun connectSocket() = withContext(Dispatchers.IO) {
         runCatching {
             val base = Socket()
-            base.soTimeout = config.connectTimeoutMillis
+            // connectTimeoutMillis should only affect dial timeout, not steady-state read timeout.
+            base.soTimeout = 0
             base.connect(InetSocketAddress(config.host, config.port), config.connectTimeoutMillis)
             socket = base
             input = base.getInputStream()
@@ -254,8 +262,8 @@ internal class JvmXmppTransport(
     }
 
     private suspend fun authenticateViaBuiltinScram(mechanism: ScramMechanism, password: String) {
-        val first = JvmScram.buildClientFirst(config.owner.local)
-        val firstPayload = Base64.getEncoder().encodeToString(first.fullMessage.toByteArray(Charsets.UTF_8))
+        val first = Scram.buildClientFirst(config.owner.local)
+        val firstPayload = Scram.encodeUtf8Base64(first.fullMessage)
         sendRaw(XmlWriter.render(xml("auth") {
             attr("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl")
             attr("mechanism", mechanism.mechanismName)
@@ -272,15 +280,15 @@ internal class JvmXmppTransport(
             fail(ErrorDomain.AUTH, 206, "Unexpected SCRAM frame via ${mechanism.mechanismName}: $challengeFrame", retryable = true)
         }
         val serverFirstB64 = challengeNode.textContent().trim()
-        val serverFirst = String(Base64.getDecoder().decode(serverFirstB64), Charsets.UTF_8)
+        val serverFirst = Scram.decodeUtf8Base64(serverFirstB64)
 
-        val final = JvmScram.buildClientFinal(
+        val final = Scram.buildClientFinal(
             mechanism = mechanism,
             password = password,
             clientFirstBare = first.messageBare,
             serverFirstMessage = serverFirst,
         )
-        val finalPayload = Base64.getEncoder().encodeToString(final.fullMessage.toByteArray(Charsets.UTF_8))
+        val finalPayload = Scram.encodeUtf8Base64(final.fullMessage)
         sendRaw(XmlWriter.render(xml("response") {
             attr("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl")
             text(finalPayload)
@@ -293,9 +301,10 @@ internal class JvmXmppTransport(
             "success" -> {
                 val successPayload = successNode.textContent().trim()
                 if (successPayload.isNotEmpty()) {
-                    val decoded = String(Base64.getDecoder().decode(successPayload), Charsets.UTF_8)
-                    val verifier = JvmScram.extractServerVerifier(decoded)
-                    if (verifier != null && !MessageDigest.isEqual(verifier.toByteArray(), final.expectedServerSignatureBase64.toByteArray()))
+                    val decoded = Scram.decodeUtf8Base64(successPayload)
+                    val verifier = Scram.extractServerVerifier(decoded)
+
+                    if (verifier != null && !Scram.constantTimeEqualsUtf8(verifier, final.expectedServerSignatureBase64))
                         fail(ErrorDomain.AUTH, 208, "SCRAM server signature verification failed", retryable = false)
                 }
             }
@@ -308,7 +317,7 @@ internal class JvmXmppTransport(
 
     private suspend fun authenticatePlain(password: String) {
         val payload = "\u0000${config.owner.local}\u0000$password"
-        val encoded = Base64.getEncoder().encodeToString(payload.toByteArray(Charsets.UTF_8))
+        val encoded = CodecUtils.base64Encode(payload.toByteArray(Charsets.UTF_8))
         sendRaw(XmlWriter.render(xml("auth") {
             attr("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl")
             attr("mechanism", "PLAIN")
@@ -335,31 +344,31 @@ internal class JvmXmppTransport(
         })) else sendRaw(XmlWriter.render(xml("auth") {
             attr("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl")
             attr("mechanism", mechanism)
-            text(Base64.getEncoder().encodeToString(initial))
+            text(CodecUtils.base64Encode(initial))
         }))
 
         while (true) {
             val frame = readRequiredFrame("sasl challenge or success")
-            val node = XmlParser.parseElementOrNull(frame)
-                ?: fail(ErrorDomain.AUTH, 214, "Unexpected non-xml SASL frame via $mechanism: $frame", retryable = true)
+            val node = XmlParser.parseElementOrNull(frame) ?: fail(ErrorDomain.AUTH, 214, "Unexpected non-xml SASL frame via $mechanism: $frame", retryable = true)
+
             when (node.localName) {
                 "challenge" -> {
                     val challengeRaw = node.textContent()
-                    val challenge = if (challengeRaw.isBlank()) ByteArray(0) else Base64.getDecoder().decode(challengeRaw.trim())
+                    val challenge = if (challengeRaw.isBlank()) ByteArray(0) else CodecUtils.base64Decode(challengeRaw.trim())
                     val response = client.evaluateChallenge(challenge)
                     if (response.isEmpty()) sendRaw(XmlWriter.render(xml("response") {
                         attr("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl")
                         selfClosing()
                     })) else sendRaw(XmlWriter.render(xml("response") {
                         attr("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl")
-                        text(Base64.getEncoder().encodeToString(response))
+                        text(CodecUtils.base64Encode(response))
                     }))
                 }
 
                 "success" -> {
                     val finalDataRaw = node.textContent()
                     if (finalDataRaw.isNotBlank() && !client.isComplete) {
-                        val finalData = Base64.getDecoder().decode(finalDataRaw.trim())
+                        val finalData = CodecUtils.base64Decode(finalDataRaw.trim())
                         client.evaluateChallenge(finalData)
                     }
                     return
@@ -435,23 +444,43 @@ internal class JvmXmppTransport(
     private fun startReadLoop() {
         if (readLoopStarted) return
         readLoopStarted = true
+
         scope.launch {
+            var lastFrame = ""
             try {
                 while (isActive) {
                     val frame = withContext(Dispatchers.IO) { reader?.nextFrame() } ?: break
+                    lastFrame = frame
+                    val streamError = parseXmppStreamError(frame)
+                    if (streamError != null) {
+                        closeInternal(
+                            reason = "stream-error:${streamError.condition.wireName}",
+                            authHardFailure = streamError.condition.authHardFailure,
+                        )
+                        return@launch
+                    }
                     callbacks.onFrame(frame)
                 }
                 closeInternal(if (closedByClient) "client-disconnect" else "eof")
             } catch (_: CancellationException) {
                 closeInternal("cancelled")
+            } catch (t: TakinaFailureException) {
+                closeInternal(
+                    reason = "read-failure:${t.error.code}",
+                    authHardFailure = t.isAuthHardFailure(),
+                )
             } catch (t: Throwable) {
-                callbacks.onFrameParseFailed("", t.message ?: "Unknown parser error")
+                callbacks.onFrameParseFailed(lastFrame, t.message ?: "Unknown parser error")
                 closeInternal("read-error:${t.message}")
             }
         }
     }
 
-    private suspend fun closeInternal(reason: String?) {
+    private suspend fun closeInternal(
+        reason: String?,
+        notifyDisconnected: Boolean = true,
+        authHardFailure: Boolean = false,
+    ) {
         runCatching { socket?.close() }
         socket = null
         input = null
@@ -459,8 +488,10 @@ internal class JvmXmppTransport(
         reader = null
         boundJid = null
         readLoopStarted = false
-        callbacks.onStateChanged(ConnectionState.CLOSED)
-        if (!closedByClient) callbacks.onClosed(reason)
+        runCatching { callbacks.onStateChanged(ConnectionState.CLOSED) }
+        if (!closedByClient && notifyDisconnected) {
+            runCatching { callbacks.onClosed(reason, authHardFailure) }
+        }
     }
 
     private fun streamOpen(): String = XmlWriter.startTag(
@@ -508,6 +539,8 @@ internal class JvmXmppTransport(
         }
         return SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAll), java.security.SecureRandom()) }
     }
+
+    private fun Throwable.isAuthHardFailure(): Boolean = this is TakinaFailureException && error.domain == ErrorDomain.AUTH && !error.retryable
 }
 
 internal actual fun createPlatformXmppTransport(

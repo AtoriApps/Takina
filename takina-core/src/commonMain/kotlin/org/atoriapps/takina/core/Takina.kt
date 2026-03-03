@@ -9,6 +9,7 @@ import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.error.ErrorDomain
 import org.atoriapps.takina.core.error.TakinaError
 import org.atoriapps.takina.core.error.TakinaErrors
+import org.atoriapps.takina.core.error.TakinaFailureException
 import org.atoriapps.takina.core.error.toTakinaError
 import org.atoriapps.takina.core.events.*
 import org.atoriapps.takina.core.models.BatchExecutionOutcome
@@ -17,11 +18,11 @@ import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.ResultMeta
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.TakinaResult
+import org.atoriapps.takina.core.models.toBareJidOrNull
 import org.atoriapps.takina.core.pipeline.*
 import org.atoriapps.takina.core.request.*
 import org.atoriapps.takina.core.runtime.TakinaRuntime
-import org.atoriapps.takina.core.utils.FunctionalUtils
-import org.atoriapps.takina.core.utils.ParsingUtils.toBareJidOrNull
+import org.atoriapps.takina.core.utils.IdsUtils
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlWriter
 import org.atoriapps.takina.core.xml.xml
@@ -257,7 +258,7 @@ internal class CoreTakina(
     }
 
     override suspend fun connect(jid: BareJid): TakinaResult<Unit> {
-        val correlationId = FunctionalUtils.newTraceId("conn")
+        val correlationId = IdsUtils.newPrefixedId("conn")
         val mark = TimeSource.Monotonic.markNow() // 记录开始时间点
 
         inactiveErrorOrNull()?.let { error ->
@@ -319,20 +320,24 @@ internal class CoreTakina(
             events.emit(SessionReadyEvent(jid))
             okResult(Unit, correlationId, mark)
         }.getOrElse { failure ->
-            runtime.setAccountState(jid, AccountState.DEGRADED)
             val error = failure.toTakinaError(
                 domain = ErrorDomain.TRANSPORT,
                 number = 104,
                 retryable = true,
                 fallbackMessage = failure.message ?: "connect failed",
             )
+            if (transports[jid] === transport) transports.remove(jid)
+            if (machine.currentState() != ConnectionState.CLOSED) {
+                transition(jid, machine, ConnectionState.CLOSED)
+            }
+            runtime.setAccountState(jid, if (isAuthHardFailure(error)) AccountState.FAILED else AccountState.DEGRADED)
             events.emit(RequestFailedEvent(jid, CoreRequestTypes.CONNECT, error))
             errResult(error, correlationId, mark)
         }
     }
 
     override suspend fun disconnect(jid: BareJid): TakinaResult<Unit> {
-        val correlationId = FunctionalUtils.newTraceId("disc")
+        val correlationId = IdsUtils.newPrefixedId("disc")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
             events.emit(RequestFailedEvent(jid, CoreRequestTypes.DISCONNECT, error))
@@ -382,7 +387,7 @@ internal class CoreTakina(
     }
 
     override suspend fun connectAll(): TakinaResult<BatchExecutionOutcome> {
-        val correlationId = FunctionalUtils.newTraceId("conn-all")
+        val correlationId = IdsUtils.newPrefixedId("conn-all")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
             events.emit(RequestFailedEvent(null, CoreRequestTypes.CONNECT_ALL, error))
@@ -415,7 +420,7 @@ internal class CoreTakina(
     }
 
     override suspend fun disconnectAll(): TakinaResult<BatchExecutionOutcome> {
-        val correlationId = FunctionalUtils.newTraceId("disc-all")
+        val correlationId = IdsUtils.newPrefixedId("disc-all")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
             events.emit(RequestFailedEvent(null, CoreRequestTypes.DISCONNECT_ALL, error))
@@ -518,7 +523,7 @@ internal class CoreTakina(
     }
 
     override suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome> {
-        val correlationId = FunctionalUtils.newTraceId("presence")
+        val correlationId = IdsUtils.newPrefixedId("presence")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
             events.emit(RequestFailedEvent(request.from, CoreRequestTypes.PRESENCE, error))
@@ -703,7 +708,8 @@ internal class CoreTakina(
 
         return object : XmppTransportCallbacks {
             override suspend fun onStateChanged(to: ConnectionState) {
-                transition(owner, machine, to)
+                val error = transition(owner, machine, to)
+                if (error != null) throw TakinaFailureException(error)
             }
 
             override suspend fun onFrame(frame: String) {
@@ -714,9 +720,9 @@ internal class CoreTakina(
                 events.emit(FrameInboundParseFailedEvent(owner = owner, raw = raw, reason = reason))
             }
 
-            override suspend fun onClosed(reason: String?) {
+            override suspend fun onClosed(reason: String?, authHardFailure: Boolean) {
                 if (owner in intentionalDisconnectOwners || shutdown) return
-                onUnexpectedDisconnect(owner, reason, authHardFailure = false)
+                onUnexpectedDisconnect(owner, reason, authHardFailure = authHardFailure)
             }
         }
     }
@@ -889,6 +895,8 @@ internal class CoreTakina(
 
     private fun ensureStarted() = check(started && !shutdown) { "Takina is not active" }
 
+    private fun isAuthHardFailure(error: TakinaError): Boolean = error.domain == ErrorDomain.AUTH && !error.retryable
+
     private fun AccountDefinition.getConnectionConfig(): ConnectionConfig {
         val mode = securityMode ?: ConnectionDefaults.SECURITY_MODE
 
@@ -904,4 +912,3 @@ internal class CoreTakina(
         )
     }
 }
-

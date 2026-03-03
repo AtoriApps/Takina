@@ -2,7 +2,7 @@ package org.atoriapps.takina.core.request
 
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.TakinaResult
-import org.atoriapps.takina.core.utils.FunctionalUtils
+import org.atoriapps.takina.core.utils.IdsUtils
 import org.atoriapps.takina.core.xml.XmlElement
 import kotlin.time.Clock
 
@@ -10,7 +10,7 @@ data class MessageRequest(
     val from: BareJid?,
     val to: BareJid,
     val body: String,
-    val messageId: String = FunctionalUtils.newTraceId("msg")
+    val messageId: String = IdsUtils.newPrefixedId("msg")
 )
 
 data class PresenceRequest(
@@ -41,7 +41,7 @@ data class IqRequest(
     val to: BareJid?,
     val type: String,
     val payload: XmlElement?,
-    val id: String = FunctionalUtils.newTraceId("iq")
+    val id: String = IdsUtils.newPrefixedId("iq")
 )
 
 data class MessageOutcome(

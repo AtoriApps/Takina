@@ -19,7 +19,11 @@ import org.atoriapps.takina.core.events.AllConnectEvent
 import org.atoriapps.takina.core.events.ConfigRejectedEvent
 import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
 import org.atoriapps.takina.core.events.PipelineNodeFailedEvent
+import org.atoriapps.takina.core.events.ReconnectScheduledEvent
 import org.atoriapps.takina.core.events.RawFrameInboundEvent
+import org.atoriapps.takina.core.error.ErrorDomain
+import org.atoriapps.takina.core.error.TakinaErrors
+import org.atoriapps.takina.core.error.TakinaFailureException
 import org.atoriapps.takina.core.features.TakinaFeature
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.BareJid
@@ -107,6 +111,40 @@ class CoreSemanticsTest {
         override val id: String = "throwing-outbound"
         override val featureType = ThrowingOutboundFeature::class
         override fun create(): ThrowingOutboundFeature = ThrowingOutboundFeature()
+    }
+
+    private class ManualCloseTransport(
+        private val config: ConnectionConfig,
+        private val callbacks: XmppTransportCallbacks,
+    ) : XmppTransport {
+        override var boundJid: String? = null
+        private var connected = false
+        override val isConnected: Boolean get() = connected
+
+        override suspend fun connect(password: String) {
+            callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
+            callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
+            callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
+            callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
+            boundJid = "${config.owner}/${config.resource}"
+            connected = true
+            callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+        }
+
+        override suspend fun sendRaw(xml: String) = Unit
+
+        override suspend fun disconnect() {
+            connected = false
+            boundJid = null
+            callbacks.onStateChanged(ConnectionState.CLOSED)
+        }
+
+        suspend fun closeUnexpectedly(authHardFailure: Boolean) {
+            connected = false
+            boundJid = null
+            callbacks.onStateChanged(ConnectionState.CLOSED)
+            callbacks.onClosed("forced-close", authHardFailure)
+        }
     }
 
     @Test
@@ -253,6 +291,77 @@ class CoreSemanticsTest {
 
         assertTrue(result is TakinaResult.Err)
         assertEquals("TAKINA-TRANSPORT-106", result.error.code)
+    }
+
+    @Test
+    fun `auth hard connect failure marks account failed and closes connection state`() = runTest {
+        val oldFactory = XmppTransportFactoryRegistry.factory
+        XmppTransportFactoryRegistry.factory = { _, callbacks ->
+            object : XmppTransport {
+                override var boundJid: String? = null
+                override val isConnected: Boolean = false
+
+                override suspend fun connect(password: String) {
+                    callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
+                    throw TakinaFailureException(
+                        TakinaErrors.of(
+                            domain = ErrorDomain.AUTH,
+                            number = 250,
+                            message = "bad credentials",
+                            retryable = false,
+                        )
+                    )
+                }
+
+                override suspend fun sendRaw(xml: String) = Unit
+                override suspend fun disconnect() = Unit
+            }
+        }
+        try {
+            val takina = createTakina {
+                addAccount {
+                    jid = alice
+                    password = "secret"
+                }
+            }
+
+            val result = takina.connect(alice)
+            assertTrue(result is TakinaResult.Err)
+            assertEquals(AccountState.FAILED, takina.runtime.accountStates.value.getValue(alice))
+            assertEquals(ConnectionState.CLOSED, takina.runtime.connectionStates.value.getValue(alice))
+            takina.shutdown()
+        } finally {
+            XmppTransportFactoryRegistry.factory = oldFactory
+        }
+    }
+
+    @Test
+    fun `auth hard unexpected close does not schedule reconnect and ends in failed state`() = runTest {
+        val oldFactory = XmppTransportFactoryRegistry.factory
+        lateinit var transport: ManualCloseTransport
+        XmppTransportFactoryRegistry.factory = { config, callbacks ->
+            ManualCloseTransport(config, callbacks).also { transport = it }
+        }
+        try {
+            var reconnectScheduled = 0
+            val takina = createTakina {
+                addAccount {
+                    jid = alice
+                    password = "secret"
+                }
+            }
+            takina.events.on(ReconnectScheduledEvent::class) { reconnectScheduled += 1 }
+
+            val connectResult = takina.connect(alice)
+            assertTrue(connectResult is TakinaResult.Ok)
+            transport.closeUnexpectedly(authHardFailure = true)
+
+            assertEquals(0, reconnectScheduled)
+            assertEquals(AccountState.FAILED, takina.runtime.accountStates.value.getValue(alice))
+            takina.shutdown()
+        } finally {
+            XmppTransportFactoryRegistry.factory = oldFactory
+        }
     }
 
     @Test

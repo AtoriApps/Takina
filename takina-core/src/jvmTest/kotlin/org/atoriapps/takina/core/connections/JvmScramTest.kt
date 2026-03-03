@@ -10,7 +10,7 @@ class JvmScramTest {
         val clientFirstBare = "n=user,r=fyko+d2lbbFgONRv9qkxdawL"
         val serverFirst = "r=fyko+d2lbbFgONRv9qkxdawL3rfcNHYJY1ZVvWVs7j,s=QSXCR+Q6sek8bf92,i=4096"
 
-        val final = JvmScram.buildClientFinal(
+        val final = Scram.buildClientFinal(
             mechanism = ScramMechanism.SHA_1,
             password = "pencil",
             clientFirstBare = clientFirstBare,
@@ -29,4 +29,3 @@ class JvmScramTest {
         assertTrue(ScramMechanism.SHA_1.isRuntimeSupported())
     }
 }
-

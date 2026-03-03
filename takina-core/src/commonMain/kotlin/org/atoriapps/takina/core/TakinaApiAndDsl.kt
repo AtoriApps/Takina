@@ -375,13 +375,13 @@ class ConfigDsl internal constructor(
     private val normalizeScope: (Scope) -> Scope = { it },
 ) {
     fun set(path: String, value: Any?, scope: Scope? = null) {
-        val spec = requireNotNull(CoreConfigCatalog.spec(path)) { "Unknown config path: $path" }
+        val spec = requireNotNull(CoreConfigCatalog.getSpec(path)) { "Unknown config path: $path" }
         require(CoreConfigCatalog.isRuntimeSettable(path)) { spec.immutableReason }
         sink(path, ConfigMutation.Set(value), scope?.let(normalizeScope))
     }
 
     fun unset(path: String, scope: Scope? = null) {
-        val spec = requireNotNull(CoreConfigCatalog.spec(path)) { "Unknown config path: $path" }
+        val spec = requireNotNull(CoreConfigCatalog.getSpec(path)) { "Unknown config path: $path" }
         require(CoreConfigCatalog.isRuntimeSettable(path)) { spec.immutableReason }
         sink(path, ConfigMutation.Unset, scope?.let(normalizeScope))
     }

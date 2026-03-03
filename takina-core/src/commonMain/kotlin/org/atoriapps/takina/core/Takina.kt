@@ -498,6 +498,7 @@ internal class CoreTakina(
 
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.MESSAGE))
+
             transport.sendRaw(processed)
             events.emit(MessageSentEvent(owner = owner, to = request.to, body = request.body))
             okResult(MessageOutcome(request.messageId), correlationId, mark)
@@ -554,6 +555,7 @@ internal class CoreTakina(
 
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.PRESENCE))
+
             transport.sendRaw(processed)
             okResult(PresenceOutcome(), correlationId, mark)
         }.getOrElse { failure ->
@@ -608,6 +610,7 @@ internal class CoreTakina(
 
         return runCatching {
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.IQ))
+
             transport.sendRaw(processed)
             okResult(IqOutcome(request.id), correlationId, mark)
         }.getOrElse { failure ->
@@ -718,6 +721,7 @@ internal class CoreTakina(
 
     private suspend fun handleInboundFrame(owner: BareJid, frame: String) {
         events.emit(RawFrameInboundEvent(owner = owner, xml = frame))
+
         unifiedPolicy.onNextItemBoundary()
         val classification = classifyInbound(frame)
         val scope = Scope.Account(owner)

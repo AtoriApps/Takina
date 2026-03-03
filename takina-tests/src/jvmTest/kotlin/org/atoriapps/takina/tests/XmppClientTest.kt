@@ -40,11 +40,7 @@ class XmppClientTest {
         }
 
         CoroutineScope(Dispatchers.Default).launch {
-            takina.runtime.connectionStates.collect {
-                it.forEach{p->
-                    println("状态变更：${p.key} -> ${p.value}")
-                }
-            }
+            takina.runtime.connectionStates.collect { it.forEach { p -> println("状态变更：${p.key} -> ${p.value}") } }
         }
         takina.events.on(RawFrameInboundEvent) { println("入 $owner：$xml") }
         takina.events.on(FinalFrameOutboundEvent) { println("出 $owner：$xml") }
@@ -97,7 +93,7 @@ class XmppClientTest {
         val security = parseSecurityMode(System.getenv("SECURITY_MODE"))
         val trustAll = System.getenv("TRUST_ALL")?.equals("true", ignoreCase = true) == true
         val messageTo = System.getenv("MSG_TO")
-        val presenceStr = System.getenv("PRESENCE") ?: "骄傲使用Takina 1.x"
+        val presenceStr = System.getenv("PRESENCE") ?: "骄傲地使用Takina 1.x"
         val sasl = System.getenv("SASL")
             ?.split(',')
             ?.map { it.trim() }

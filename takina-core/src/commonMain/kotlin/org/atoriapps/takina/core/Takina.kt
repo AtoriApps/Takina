@@ -71,9 +71,9 @@ class AccountContext internal constructor(private val takina: CoreTakina, val ow
 
     fun configs(init: ConfigDsl.() -> Unit) {
         ConfigDsl(
-            sink = { path, value, scope ->
+            sink = { path, mutation, scope ->
                 val resolvedScope = (scope ?: Scope.Account(owner)).enforceAccountScope(owner, "account.config")
-                takina.applyConfig(path, value, resolvedScope, owner)
+                takina.applyConfig(path, mutation, resolvedScope, owner)
             },
         ).apply(init)
     }
@@ -175,7 +175,7 @@ internal class CoreTakina(
 
     override fun configs(init: ConfigDsl.() -> Unit) {
         ensureStarted()
-        ConfigDsl(sink = { path, value, scope -> applyConfig(path, value, scope ?: Scope.Global, null) }).apply(init)
+        ConfigDsl(sink = { path, mutation, scope -> applyConfig(path, mutation, scope ?: Scope.Global, null) }).apply(init)
     }
 
     override fun addAccount(init: AccountDsl.() -> Unit) {
@@ -195,7 +195,7 @@ internal class CoreTakina(
     }
 
     private fun applyConfigDraft(draft: ConfigDraft, accountOwner: BareJid? = null) {
-        applyConfig(draft.path, draft.value, draft.scope, accountOwner)
+        applyConfig(draft.path, draft.mutation, draft.scope, accountOwner)
     }
 
     private fun applyNodePolicyDraft(draft: NodePolicyDraft) {
@@ -386,8 +386,11 @@ internal class CoreTakina(
         events.emit(FeatureStateChangedEvent(feature = featureProvider.id, enabled = enabled))
     }
 
-    internal fun applyConfig(path: String, value: Any?, scope: Scope, accountOwner: BareJid?) {
-        val result = unifiedPolicy.applyConfig(path, value, scope)
+    internal fun applyConfig(path: String, mutation: ConfigMutation, scope: Scope, accountOwner: BareJid?) {
+        val result = when (mutation) {
+            is ConfigMutation.Set -> unifiedPolicy.applyConfig(path, mutation.value, scope)
+            ConfigMutation.Unset -> unifiedPolicy.unsetConfig(path, scope)
+        }
         val eventPath = result.path
 
         when {

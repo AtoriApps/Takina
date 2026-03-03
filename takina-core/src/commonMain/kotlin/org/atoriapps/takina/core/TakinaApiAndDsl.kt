@@ -1,7 +1,7 @@
 package org.atoriapps.takina.core
 
-import org.atoriapps.takina.core.connections.ConnectionDefaults
 import org.atoriapps.takina.core.connections.SecurityMode
+import org.atoriapps.takina.core.connections.ConnectionDefaults
 import org.atoriapps.takina.core.controlling.CoreConfigCatalog
 import org.atoriapps.takina.core.features.InstalledFeature
 import org.atoriapps.takina.core.features.TakinaFeature
@@ -49,9 +49,14 @@ internal data class FeatureConfigureDraft(
     val apply: (TakinaFeature) -> Unit,
 )
 
+internal sealed interface ConfigMutation {
+    data class Set(val value: Any?) : ConfigMutation
+    data object Unset : ConfigMutation
+}
+
 internal data class ConfigDraft(
     val path: String,
-    val value: Any?,
+    val mutation: ConfigMutation,
     val scope: Scope,
 )
 
@@ -70,7 +75,7 @@ private data class PendingCapabilityDraft(
 
 private data class PendingConfigDraft(
     val path: String,
-    val value: Any?,
+    val mutation: ConfigMutation,
     val scope: Scope?,
 )
 
@@ -110,8 +115,8 @@ class TakinaConfiguration internal constructor() {
     }
 
     fun configs(init: ConfigDsl.() -> Unit) {
-        ConfigDsl(sink = { path, value, scope ->
-            configDrafts += ConfigDraft(path, value, scope ?: Scope.Global)
+        ConfigDsl(sink = { path, mutation, scope ->
+            configDrafts += ConfigDraft(path, mutation, scope ?: Scope.Global)
         }).apply(init)
     }
 
@@ -213,8 +218,8 @@ class AccountDsl {
     }
 
     fun configs(init: ConfigDsl.() -> Unit) {
-        ConfigDsl(sink = { path, value, scope ->
-            accountConfigDrafts += PendingConfigDraft(path = path, value = value, scope = scope)
+        ConfigDsl(sink = { path, mutation, scope ->
+            accountConfigDrafts += PendingConfigDraft(path = path, mutation = mutation, scope = scope)
         }).apply(init)
     }
 
@@ -250,7 +255,7 @@ class AccountDsl {
             configDrafts = accountConfigDrafts.map { draft ->
                 ConfigDraft(
                     path = draft.path,
-                    value = draft.value,
+                    mutation = draft.mutation,
                     scope = (draft.scope ?: Scope.Account(owner)).enforceAccountScope(owner, "addAccount.config"),
                 )
             },
@@ -366,13 +371,19 @@ class CapabilityDsl internal constructor(
 
 @TakinaDsl
 class ConfigDsl internal constructor(
-    private val sink: (path: String, value: Any?, scope: Scope?) -> Unit,
+    private val sink: (path: String, mutation: ConfigMutation, scope: Scope?) -> Unit,
     private val normalizeScope: (Scope) -> Scope = { it },
 ) {
     fun set(path: String, value: Any?, scope: Scope? = null) {
         val spec = requireNotNull(CoreConfigCatalog.spec(path)) { "Unknown config path: $path" }
         require(CoreConfigCatalog.isRuntimeSettable(path)) { spec.immutableReason }
-        sink(path, value, scope?.let(normalizeScope))
+        sink(path, ConfigMutation.Set(value), scope?.let(normalizeScope))
+    }
+
+    fun unset(path: String, scope: Scope? = null) {
+        val spec = requireNotNull(CoreConfigCatalog.spec(path)) { "Unknown config path: $path" }
+        require(CoreConfigCatalog.isRuntimeSettable(path)) { spec.immutableReason }
+        sink(path, ConfigMutation.Unset, scope?.let(normalizeScope))
     }
 
     fun reconnect(init: ReconnectDsl.() -> Unit) {

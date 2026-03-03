@@ -7,6 +7,7 @@ import kotlin.test.assertTrue
 import org.atoriapps.takina.core.controlling.ApplyMode
 import org.atoriapps.takina.core.controlling.ConnectionConfigPaths
 import org.atoriapps.takina.core.controlling.CoreConfigCatalog
+import org.atoriapps.takina.core.controlling.ConfigRejectCode
 import org.atoriapps.takina.core.controlling.ReconnectConfigPaths
 import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.features.FeatureRegistry
@@ -85,7 +86,7 @@ class UnifiedPolicyTest {
         unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, 2_000L, Scope.Global)
         unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, 3_000L, Scope.Account(owner))
 
-        unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, null, Scope.Account(owner))
+        unifiedPolicy.unsetConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner))
 
         assertEquals(2_000L, unifiedPolicy.currentConfig(ReconnectConfigPaths.DELAY, Scope.Account(owner)))
     }
@@ -95,6 +96,24 @@ class UnifiedPolicyTest {
         val accepted = unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, 1500, Scope.Global)
         assertTrue(accepted.applied)
         assertEquals(1500L, unifiedPolicy.currentConfigOrDefault(CoreConfigCatalog.Reconnect.DELAY, Scope.Global))
+    }
+
+    @Test
+    fun `set null no longer implies unset`() {
+        val result = unifiedPolicy.applyConfig(ReconnectConfigPaths.DELAY, null, Scope.Global)
+        assertFalse(result.applied)
+        assertEquals(CoreConfigCatalog.Reconnect.DELAY.path, result.path)
+    }
+
+    @Test
+    fun `reconnect config rejects message scope`() {
+        val result = unifiedPolicy.applyConfig(
+            ReconnectConfigPaths.DELAY,
+            1000L,
+            Scope.Message(owner = owner, peer = peer, messageId = "m1"),
+        )
+        assertFalse(result.applied)
+        assertEquals(ConfigRejectCode.UNSUPPORTED_SCOPE, result.rejectCode)
     }
 
     private fun provider(featureId: String): TakinaFeatureProvider<TakinaFeature> = object : TakinaFeatureProvider<TakinaFeature> {

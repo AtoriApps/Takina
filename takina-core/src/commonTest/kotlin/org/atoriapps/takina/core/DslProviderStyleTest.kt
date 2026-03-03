@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.atoriapps.takina.core.connections.SecurityMode
+import org.atoriapps.takina.core.controlling.CoreConfigCatalog
 import org.atoriapps.takina.core.models.toBareJid
 import org.atoriapps.takina.core.request.IqRequestDsl
 import org.atoriapps.takina.core.request.MessageRequestDsl
@@ -40,6 +41,7 @@ class DslProviderStyleTest {
                     factor { 1.5 }
                     maxAttempts { 3 }
                 }
+                unset(CoreConfigCatalog.Reconnect.DELAY.path)
                 observability {
                     sampling { 1.0 }
                     alertThreshold = 0.9

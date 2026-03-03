@@ -10,35 +10,79 @@ enum class ApplyMode {
     BUILD_TIME_IMMUTABLE,
 }
 
-sealed interface ConfigNormalizeResult {
-    data class Accepted(val value: Any) : ConfigNormalizeResult
-    data class Rejected(val reason: String) : ConfigNormalizeResult
+enum class ConfigRejectCode {
+    UNKNOWN_PATH,
+    UNSUPPORTED_SCOPE,
+    IMMUTABLE,
+    TYPE_MISMATCH,
+    VALIDATION_FAILED,
 }
 
-data class ConfigSpec<T : Any>(
+sealed interface ConfigNormalizeResult {
+    data class Accepted(val value: Any?) : ConfigNormalizeResult
+    data class Rejected(val code: ConfigRejectCode, val reason: String) : ConfigNormalizeResult
+}
+
+data class ConfigSpec<T>(
     val path: String,
     val applyMode: ApplyMode,
     val mutable: Boolean,
     val expectedType: String,
     val immutableReason: String = "Config is build-time immutable",
     val defaultValue: T? = null,
+    val hasDefault: Boolean = defaultValue != null,
+    val nullable: Boolean = false,
     val allowedScopes: Set<ScopeKind> = ScopeKind.entries.toSet(),
     private val coerce: (Any) -> T?,
     private val validate: (T) -> String? = { null },
 ) {
-    val hasDefault: Boolean get() = defaultValue != null
-    val default: T get() = requireNotNull(defaultValue) { "Config $path has no default value" }
+    val default: T
+        get() {
+            check(hasDefault) { "Config $path has no default value" }
+            @Suppress("UNCHECKED_CAST")
+            return defaultValue as T
+        }
 
     fun supports(scope: Scope): Boolean = scope.kind in allowedScopes
 
-    fun decode(raw: Any): T? {
+    fun decode(raw: Any?): T? {
+        if (raw == null) {
+            if (!nullable) return null
+            @Suppress("UNCHECKED_CAST")
+            val nullValue = null as T
+            return if (validate(nullValue) == null) nullValue else null
+        }
         val coerced = coerce(raw) ?: return null
         return if (validate(coerced) == null) coerced else null
     }
 
-    fun normalize(raw: Any): ConfigNormalizeResult {
-        val coerced = coerce(raw) ?: return ConfigNormalizeResult.Rejected("$path must be $expectedType")
-        validate(coerced)?.let { reason -> return ConfigNormalizeResult.Rejected(reason) }
+    fun normalize(raw: Any?): ConfigNormalizeResult {
+        if (raw == null) {
+            if (!nullable) return ConfigNormalizeResult.Rejected(
+                code = ConfigRejectCode.TYPE_MISMATCH,
+                reason = "$path must be $expectedType",
+            )
+            @Suppress("UNCHECKED_CAST")
+            val nullValue = null as T
+            validate(nullValue)?.let { reason ->
+                return ConfigNormalizeResult.Rejected(
+                    code = ConfigRejectCode.VALIDATION_FAILED,
+                    reason = reason,
+                )
+            }
+            return ConfigNormalizeResult.Accepted(null)
+        }
+
+        val coerced = coerce(raw) ?: return ConfigNormalizeResult.Rejected(
+            code = ConfigRejectCode.TYPE_MISMATCH,
+            reason = "$path must be $expectedType",
+        )
+        validate(coerced)?.let { reason ->
+            return ConfigNormalizeResult.Rejected(
+                code = ConfigRejectCode.VALIDATION_FAILED,
+                reason = reason,
+            )
+        }
         return ConfigNormalizeResult.Accepted(coerced)
     }
 }
@@ -48,9 +92,16 @@ data class ConfigChangeResult(
     val applied: Boolean,
     val applyMode: ApplyMode,
     val rejectedReason: String? = null,
+    val rejectCode: ConfigRejectCode? = null,
 )
 
 object CoreConfigCatalog {
+    private val accountWideScopes = setOf(
+        ScopeKind.PRESET,
+        ScopeKind.GLOBAL,
+        ScopeKind.ACCOUNT,
+    )
+
     object Connection {
         val HOST = ConfigSpec(
             path = ConnectionConfigPaths.HOST,
@@ -111,6 +162,8 @@ object CoreConfigCatalog {
             mutable = true,
             expectedType = "Boolean",
             defaultValue = true,
+            hasDefault = true,
+            allowedScopes = accountWideScopes,
             coerce = ::booleanValue,
         )
         val DELAY = ConfigSpec(
@@ -119,6 +172,8 @@ object CoreConfigCatalog {
             mutable = true,
             expectedType = "Long >= 0",
             defaultValue = 1_000L,
+            hasDefault = true,
+            allowedScopes = accountWideScopes,
             coerce = ::longValue,
             validate = { value -> if (value >= 0L) null else "${ReconnectConfigPaths.DELAY} must be >= 0" },
         )
@@ -128,6 +183,8 @@ object CoreConfigCatalog {
             mutable = true,
             expectedType = "Double > 0",
             defaultValue = 2.0,
+            hasDefault = true,
+            allowedScopes = accountWideScopes,
             coerce = ::doubleValue,
             validate = { value -> if (value > 0.0) null else "${ReconnectConfigPaths.FACTOR} must be > 0" },
         )
@@ -137,6 +194,8 @@ object CoreConfigCatalog {
             mutable = true,
             expectedType = "Double in [0, 1]",
             defaultValue = 0.0,
+            hasDefault = true,
+            allowedScopes = accountWideScopes,
             coerce = ::doubleValue,
             validate = { value ->
                 if (value in 0.0..1.0) null
@@ -149,6 +208,8 @@ object CoreConfigCatalog {
             mutable = true,
             expectedType = "Int >= 0",
             defaultValue = 5,
+            hasDefault = true,
+            allowedScopes = accountWideScopes,
             coerce = ::intValue,
             validate = { value -> if (value >= 0) null else "${ReconnectConfigPaths.MAX_ATTEMPTS} must be >= 0" },
         )
@@ -161,6 +222,8 @@ object CoreConfigCatalog {
             mutable = true,
             expectedType = "Double in [0, 1]",
             defaultValue = 1.0,
+            hasDefault = true,
+            allowedScopes = accountWideScopes,
             coerce = ::doubleValue,
             validate = { value ->
                 if (value in 0.0..1.0) null
@@ -173,6 +236,8 @@ object CoreConfigCatalog {
             mutable = true,
             expectedType = "Double in [0, 1]",
             defaultValue = 0.9,
+            hasDefault = true,
+            allowedScopes = accountWideScopes,
             coerce = ::doubleValue,
             validate = { value ->
                 if (value in 0.0..1.0) null
@@ -199,15 +264,13 @@ object CoreConfigCatalog {
 
     val all: Map<String, ConfigSpec<*>> = specsInOrder.associateBy { it.path }
 
-    val presetDefaults: List<Pair<ConfigSpec<*>, Any>> = specsInOrder.mapNotNull { spec ->
-        val defaultValue = spec.defaultValue ?: return@mapNotNull null
+    val presetDefaults: List<Pair<ConfigSpec<*>, Any?>> = specsInOrder.mapNotNull { spec ->
+        if (!spec.hasDefault) return@mapNotNull null
         if (!spec.mutable || spec.applyMode == ApplyMode.BUILD_TIME_IMMUTABLE) return@mapNotNull null
-        spec to defaultValue
+        spec to spec.defaultValue
     }
 
     fun spec(path: String): ConfigSpec<*>? = all[path]
-
-    fun isRegistered(path: String): Boolean = path in all
 
     fun isRuntimeSettable(path: String): Boolean = spec(path)?.let { it.mutable && it.applyMode != ApplyMode.BUILD_TIME_IMMUTABLE } == true
 
@@ -221,7 +284,8 @@ object CoreConfigCatalog {
     private fun stringListValue(value: Any): List<String>? {
         val list = value as? List<*> ?: return null
         if (list.any { it !is String }) return null
-        @Suppress("UNCHECKED_CAST") return list as List<String>
+        @Suppress("UNCHECKED_CAST")
+        return list as List<String>
     }
 
     private fun longValue(value: Any): Long? = when (value) {

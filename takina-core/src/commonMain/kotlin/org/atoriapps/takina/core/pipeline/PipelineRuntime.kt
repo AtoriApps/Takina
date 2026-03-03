@@ -3,13 +3,25 @@ package org.atoriapps.takina.core.pipeline
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.TimeSource
+import kotlin.coroutines.cancellation.CancellationException
 import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
+import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
 
 // TODO、CHECK：管线about的前后依赖型排序好像没做，另外这个API（about）是否要更名？另外这里面是不是也有Key？再看看
 
-class PipelineRuntime(private val unifiedPolicy: UnifiedPolicy ) {
+data class PipelineNodeFailure(
+    val nodeKey: String,
+    val direction: PipelineDirection,
+    val owner: BareJid?,
+    val cause: Throwable,
+)
+
+class PipelineRuntime(
+    private val unifiedPolicy: UnifiedPolicy,
+    private val onNodeFailure: ((PipelineNodeFailure) -> Unit)? = null,
+) {
     private data class InboundRegistration(
         val node: InboundNode,
         val featureProvider: TakinaFeatureProvider<*>?,
@@ -84,8 +96,17 @@ class PipelineRuntime(private val unifiedPolicy: UnifiedPolicy ) {
 
                     NodeResult.Bypass -> metric.bypassCount += 1
                 }
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 metric.failCount += 1
+                onNodeFailure?.invoke(
+                    PipelineNodeFailure(
+                        nodeKey = state.nodeKey,
+                        direction = PipelineDirection.INBOUND,
+                        owner = frame.owner,
+                        cause = t,
+                    ),
+                )
             } finally {
                 metric.duration += mark.elapsedNow()
             }
@@ -123,8 +144,17 @@ class PipelineRuntime(private val unifiedPolicy: UnifiedPolicy ) {
 
                     NodeResult.Bypass -> metric.bypassCount += 1
                 }
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 metric.failCount += 1
+                onNodeFailure?.invoke(
+                    PipelineNodeFailure(
+                        nodeKey = state.nodeKey,
+                        direction = PipelineDirection.OUTBOUND,
+                        owner = frame.owner,
+                        cause = t,
+                    ),
+                )
             } finally {
                 metric.duration += mark.elapsedNow()
             }

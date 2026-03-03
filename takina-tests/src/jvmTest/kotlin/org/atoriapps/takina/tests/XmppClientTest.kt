@@ -49,7 +49,8 @@ class XmppClientTest {
         takina.events.on(RawFrameInboundEvent) { println("入 $owner：$xml") }
         takina.events.on(FinalFrameOutboundEvent) { println("出 $owner：$xml") }
 
-        takina.connectAll()
+        val connectAllResult = takina.connectAll()
+        assertTrue(connectAllResult is TakinaResult.Ok)
         assertEquals(ConnectionState.ESTABLISHED, takina.runtime.connectionStates.value.values.first())
 
         val target = env.messageTo?.toBareJid() ?: env.jid

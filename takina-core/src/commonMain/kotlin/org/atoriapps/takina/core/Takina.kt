@@ -3,22 +3,30 @@ package org.atoriapps.takina.core
 import kotlinx.coroutines.runBlocking
 import org.atoriapps.takina.core.bootstrap.FeatureTopologyValidator
 import org.atoriapps.takina.core.connections.*
+import org.atoriapps.takina.core.controlling.ConfigRejectCode
 import org.atoriapps.takina.core.controlling.CoreConfigCatalog
 import org.atoriapps.takina.core.controlling.UnifiedPolicy
 import org.atoriapps.takina.core.error.ErrorDomain
+import org.atoriapps.takina.core.error.TakinaError
 import org.atoriapps.takina.core.error.TakinaErrors
+import org.atoriapps.takina.core.error.toTakinaError
 import org.atoriapps.takina.core.events.*
+import org.atoriapps.takina.core.models.BatchExecutionOutcome
 import org.atoriapps.takina.core.features.*
 import org.atoriapps.takina.core.models.BareJid
+import org.atoriapps.takina.core.models.ResultMeta
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.TakinaResult
 import org.atoriapps.takina.core.pipeline.*
 import org.atoriapps.takina.core.request.*
 import org.atoriapps.takina.core.runtime.TakinaRuntime
+import org.atoriapps.takina.core.utils.FunctionalUtils
 import org.atoriapps.takina.core.utils.ParsingUtils.toBareJidOrNull
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlWriter
 import org.atoriapps.takina.core.xml.xml
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 fun createTakina(
     featurePreset: FeaturePreset = FeaturePreset.Recommended,
@@ -47,12 +55,12 @@ interface Takina {
     fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
     fun <API : FeatureApi, FEATURE> apiOrNull(provider: TakinaFeatureProvider<FEATURE>): API? where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API>
 
-    suspend fun connect(jid: BareJid)
+    suspend fun connect(jid: BareJid): TakinaResult<Unit>
     suspend fun connect(accountContext: AccountContext) = connect(accountContext.owner)
-    suspend fun disconnect(jid: BareJid)
+    suspend fun disconnect(jid: BareJid): TakinaResult<Unit>
     suspend fun disconnect(accountContext: AccountContext) = disconnect(accountContext.owner)
-    suspend fun connectAll()
-    suspend fun disconnectAll()
+    suspend fun connectAll(): TakinaResult<BatchExecutionOutcome>
+    suspend fun disconnectAll(): TakinaResult<BatchExecutionOutcome>
     suspend fun shutdown()
 }
 
@@ -78,8 +86,8 @@ class AccountContext internal constructor(private val takina: CoreTakina, val ow
         ).apply(init)
     }
 
-    suspend fun connect() = takina.connect(owner)
-    suspend fun disconnect() = takina.disconnect(owner)
+    suspend fun connect(): TakinaResult<Unit> = takina.connect(owner)
+    suspend fun disconnect(): TakinaResult<Unit> = takina.disconnect(owner)
 
     // CHECK：AccountContext是否该提供`api`入口
     fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> = takina.api(provider)
@@ -138,7 +146,22 @@ internal class CoreTakina(
 
         featureRegistry = FeatureRegistry(installedFeatures)
         unifiedPolicy = UnifiedPolicy(featureRegistry)
-        pipelineRuntime = PipelineRuntime(unifiedPolicy)
+        pipelineRuntime = PipelineRuntime(unifiedPolicy) { failure ->
+            val error = failure.cause.toTakinaError(
+                domain = ErrorDomain.PIPELINE,
+                number = 210,
+                retryable = true,
+                fallbackMessage = "Pipeline node ${failure.nodeKey} execution failed",
+            )
+            events.emit(
+                PipelineNodeFailedEvent(
+                    owner = failure.owner,
+                    direction = failure.direction,
+                    nodeKey = failure.nodeKey,
+                    error = error,
+                ),
+            )
+        }
         runtime = TakinaRuntime(unifiedPolicy, pipelineRuntime)
         request = TakinaRequestApi(this)
 
@@ -231,18 +254,51 @@ internal class CoreTakina(
         return raw as API
     }
 
-    override suspend fun connect(jid: BareJid) {
-        ensureStarted()
+    override suspend fun connect(jid: BareJid): TakinaResult<Unit> {
+        val correlationId = FunctionalUtils.newTraceId("conn")
+        val mark = TimeSource.Monotonic.markNow() // 记录开始时间点
 
-        val account = requireNotNull(accounts[jid]) { "Account not found: $jid" }
-        val machine = requireNotNull(stateMachines[jid]) { "State machine not found: $jid" }
+        inactiveErrorOrNull()?.let { error ->
+            events.emit(RequestFailedEvent(jid, CoreRequestTypes.CONNECT, error))
+            return errResult(error, correlationId, mark)
+        }
+
+        val account = accounts[jid]
+        if (account == null) {
+            val error = TakinaErrors.of(
+                domain = ErrorDomain.CONFIG,
+                number = 302,
+                message = "Account not found: $jid",
+                retryable = false,
+            )
+            events.emit(RequestFailedEvent(jid, CoreRequestTypes.CONNECT, error))
+            return errResult(error, correlationId, mark)
+        }
+
+        val machine = stateMachines[jid]
+        if (machine == null) {
+            val error = TakinaErrors.of(
+                domain = ErrorDomain.INTERNAL,
+                number = 302,
+                message = "State machine not found: $jid",
+                retryable = false,
+            )
+            events.emit(RequestFailedEvent(jid, CoreRequestTypes.CONNECT, error))
+            return errResult(error, correlationId, mark)
+        }
 
         if (machine.currentState() == ConnectionState.ESTABLISHED) {
             runtime.setAccountState(jid, AccountState.ONLINE)
-            return
+            return okResult(Unit, correlationId, mark)
         }
 
-        if (machine.currentState() == ConnectionState.CLOSED) transition(jid, machine, ConnectionState.IDLE)
+        if (machine.currentState() == ConnectionState.CLOSED) {
+            val error = transition(jid, machine, ConnectionState.IDLE)
+            if (error != null) {
+                runtime.setAccountState(jid, AccountState.DEGRADED)
+                return errResult(error, correlationId, mark)
+            }
+        }
 
         runtime.setAccountState(jid, AccountState.CONNECTING)
         unifiedPolicy.onNextConnectionBoundary()
@@ -252,40 +308,141 @@ internal class CoreTakina(
             transportCallbacksFor(jid),
         )
 
-        transports.remove(jid)?.let { runCatching { it.disconnect() } }
+        runCatching { transports.remove(jid)?.disconnect() }
         transports[jid] = transport
 
-        runCatching { transport.connect(account.passwordProvider()) }.onFailure {
+        return runCatching {
+            transport.connect(account.passwordProvider())
+            runtime.setAccountState(jid, AccountState.ONLINE)
+            events.emit(SessionReadyEvent(jid))
+            okResult(Unit, correlationId, mark)
+        }.getOrElse { failure ->
             runtime.setAccountState(jid, AccountState.DEGRADED)
-            events.emit(RequestFailedEvent(jid, "connect", it.message ?: "connect failed"))
-            throw it
+            val error = failure.toTakinaError(
+                domain = ErrorDomain.TRANSPORT,
+                number = 104,
+                retryable = true,
+                fallbackMessage = failure.message ?: "connect failed",
+            )
+            events.emit(RequestFailedEvent(jid, CoreRequestTypes.CONNECT, error))
+            errResult(error, correlationId, mark)
+        }
+    }
+
+    override suspend fun disconnect(jid: BareJid): TakinaResult<Unit> {
+        val correlationId = FunctionalUtils.newTraceId("disc")
+        val mark = TimeSource.Monotonic.markNow()
+        inactiveErrorOrNull()?.let { error ->
+            events.emit(RequestFailedEvent(jid, CoreRequestTypes.DISCONNECT, error))
+            return errResult(error, correlationId, mark)
         }
 
-        runtime.setAccountState(jid, AccountState.ONLINE)
-        events.emit(SessionReadyEvent(jid))
-    }
+        val machine = stateMachines[jid]
+        if (machine == null) {
+            val error = TakinaErrors.of(
+                domain = ErrorDomain.CONFIG,
+                number = 303,
+                message = "Account not found: $jid",
+                retryable = false,
+            )
+            events.emit(RequestFailedEvent(jid, CoreRequestTypes.DISCONNECT, error))
+            return errResult(error, correlationId, mark)
+        }
 
-    override suspend fun disconnect(jid: BareJid) {
-        ensureStarted()
-
-        val machine = requireNotNull(stateMachines[jid]) { "Account not found: $jid" }
         intentionalDisconnectOwners += jid
-        runCatching { transports.remove(jid)?.disconnect() }
+        try {
+            val disconnectFailure = runCatching { transports.remove(jid)?.disconnect() }.exceptionOrNull()
+            if (disconnectFailure != null) {
+                val error = disconnectFailure.toTakinaError(
+                    domain = ErrorDomain.TRANSPORT,
+                    number = 105,
+                    retryable = true,
+                    fallbackMessage = disconnectFailure.message ?: "disconnect failed",
+                )
+                runtime.setAccountState(jid, AccountState.DEGRADED)
+                events.emit(RequestFailedEvent(jid, CoreRequestTypes.DISCONNECT, error))
+                return errResult(error, correlationId, mark)
+            }
 
-        if (machine.currentState() != ConnectionState.CLOSED) transition(jid, machine, ConnectionState.CLOSED)
+            if (machine.currentState() != ConnectionState.CLOSED) {
+                val error = transition(jid, machine, ConnectionState.CLOSED)
+                if (error != null) {
+                    runtime.setAccountState(jid, AccountState.DEGRADED)
+                    return errResult(error, correlationId, mark)
+                }
+            }
 
-        runtime.setAccountState(jid, AccountState.OFFLINE)
-        intentionalDisconnectOwners -= jid
+            runtime.setAccountState(jid, AccountState.OFFLINE)
+            return okResult(Unit, correlationId, mark)
+        } finally {
+            intentionalDisconnectOwners -= jid
+        }
     }
 
-    override suspend fun connectAll() {
-        ensureStarted()
-        accounts.keys.forEach { connect(it) }
+    override suspend fun connectAll(): TakinaResult<BatchExecutionOutcome> {
+        val correlationId = FunctionalUtils.newTraceId("conn-all")
+        val mark = TimeSource.Monotonic.markNow()
+        inactiveErrorOrNull()?.let { error ->
+            events.emit(RequestFailedEvent(null, CoreRequestTypes.CONNECT_ALL, error))
+            return errResult(error, correlationId, mark)
+        }
+
+        val results = linkedMapOf<BareJid, TakinaResult<Unit>>()
+        return runCatching {
+            accounts.keys.toList().forEach { owner ->
+                results[owner] = connect(owner)
+            }
+
+            val failedCount = results.values.count { it is TakinaResult.Err }
+            val outcome = BatchExecutionOutcome(
+                succeed = results.size - failedCount,
+                failed = failedCount,
+            )
+            events.emit(AllConnectEvent(outcome = outcome, results = results))
+            okResult(outcome, correlationId, mark)
+        }.getOrElse { failure ->
+            val error = failure.toTakinaError(
+                domain = ErrorDomain.INTERNAL,
+                number = 151,
+                retryable = true,
+                fallbackMessage = failure.message ?: "connectAll did not complete",
+            )
+            events.emit(RequestFailedEvent(null, CoreRequestTypes.CONNECT_ALL, error))
+            errResult(error, correlationId, mark)
+        }
     }
 
-    override suspend fun disconnectAll() {
-        ensureStarted()
-        accounts.keys.forEach { disconnect(it) }
+    override suspend fun disconnectAll(): TakinaResult<BatchExecutionOutcome> {
+        val correlationId = FunctionalUtils.newTraceId("disc-all")
+        val mark = TimeSource.Monotonic.markNow()
+        inactiveErrorOrNull()?.let { error ->
+            events.emit(RequestFailedEvent(null, CoreRequestTypes.DISCONNECT_ALL, error))
+            return errResult(error, correlationId, mark)
+        }
+
+        val results = linkedMapOf<BareJid, TakinaResult<Unit>>()
+        return runCatching {
+            accounts.keys.toList().forEach { owner ->
+                results[owner] = disconnect(owner)
+            }
+
+            val failedCount = results.values.count { it is TakinaResult.Err }
+            val outcome = BatchExecutionOutcome(
+                succeed = results.size - failedCount,
+                failed = failedCount,
+            )
+            events.emit(AllDisconnectEvent(outcome = outcome, results = results))
+            okResult(outcome, correlationId, mark)
+        }.getOrElse { failure ->
+            val error = failure.toTakinaError(
+                domain = ErrorDomain.INTERNAL,
+                number = 152,
+                retryable = true,
+                fallbackMessage = failure.message ?: "disconnectAll did not complete",
+            )
+            events.emit(RequestFailedEvent(null, CoreRequestTypes.DISCONNECT_ALL, error))
+            errResult(error, correlationId, mark)
+        }
     }
 
     override suspend fun shutdown() {
@@ -299,11 +456,30 @@ internal class CoreTakina(
 
     // HACK：这几个是不是不建议在这里构建吧，没准未来解耦？
     override suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome> {
-        ensureStarted()
+        val correlationId = request.messageId
+        val mark = TimeSource.Monotonic.markNow()
+        inactiveErrorOrNull()?.let { error ->
+            events.emit(RequestFailedEvent(request.from, CoreRequestTypes.MESSAGE, error))
+            request.from?.let { owner -> events.emit(MessageSendFailedEvent(owner, request.to, error)) }
+            return errResult(error, correlationId, mark)
+        }
 
         unifiedPolicy.onNextItemBoundary()
-        val owner = resolveOwner(request.from)
-        val transport = requireConnectedTransport(owner)
+        val (owner, ownerError) = resolveOwnerOrError(request.from)
+        if (ownerError != null || owner == null) {
+            val error = ownerError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 901, "Owner resolution failed", retryable = false)
+            events.emit(RequestFailedEvent(request.from, CoreRequestTypes.REQUEST_ROUTING, error))
+            return errResult(error, correlationId, mark)
+        }
+
+        val (transport, transportError) = connectedTransportOrError(owner)
+        if (transportError != null || transport == null) {
+            val error = transportError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 902, "Transport resolution failed", retryable = false)
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.MESSAGE, error))
+            events.emit(MessageSendFailedEvent(owner, request.to, error))
+            return errResult(error, correlationId, mark)
+        }
+
         val scope = Scope.Message(owner, request.to, request.messageId)
         val raw = XmlWriter.render(xml("message") {
             attr("id", request.messageId)
@@ -313,27 +489,54 @@ internal class CoreTakina(
         })
 
         val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope)
+        if (processed == null) {
+            val error = TakinaErrors.of(ErrorDomain.PIPELINE, 201, "Outbound message dropped", retryable = false)
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.MESSAGE, error))
+            events.emit(MessageSendFailedEvent(owner, request.to, error))
+            return errResult(error, correlationId, mark)
+        }
 
-        return if (processed == null) {
-            events.emit(MessageSendFailedEvent(owner, request.to, "Dropped by outbound node"))
-            TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 201, "Outbound message dropped", retryable = false))
-        } else runCatching {
-            events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = "message"))
+        return runCatching {
+            events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.MESSAGE))
             transport.sendRaw(processed)
             events.emit(MessageSentEvent(owner = owner, to = request.to, body = request.body))
-            TakinaResult.Ok(MessageOutcome(request.messageId))
-        }.getOrElse {
-            events.emit(MessageSendFailedEvent(owner, request.to, it.message ?: "send failed"))
-            TakinaResult.Err(TakinaErrors.of(ErrorDomain.TRANSPORT, 101, it.message ?: "send failed", retryable = true, cause = it))
+            okResult(MessageOutcome(request.messageId), correlationId, mark)
+        }.getOrElse { failure ->
+            val error = failure.toTakinaError(
+                domain = ErrorDomain.TRANSPORT,
+                number = 101,
+                retryable = true,
+                fallbackMessage = failure.message ?: "send failed",
+            )
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.MESSAGE, error))
+            events.emit(MessageSendFailedEvent(owner, request.to, error))
+            errResult(error, correlationId, mark)
         }
     }
 
     override suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome> {
-        ensureStarted()
+        val correlationId = FunctionalUtils.newTraceId("presence")
+        val mark = TimeSource.Monotonic.markNow()
+        inactiveErrorOrNull()?.let { error ->
+            events.emit(RequestFailedEvent(request.from, CoreRequestTypes.PRESENCE, error))
+            return errResult(error, correlationId, mark)
+        }
 
         unifiedPolicy.onNextItemBoundary()
-        val owner = resolveOwner(request.from)
-        val transport = requireConnectedTransport(owner)
+        val (owner, ownerError) = resolveOwnerOrError(request.from)
+        if (ownerError != null || owner == null) {
+            val error = ownerError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 903, "Owner resolution failed", retryable = false)
+            events.emit(RequestFailedEvent(request.from, CoreRequestTypes.REQUEST_ROUTING, error))
+            return errResult(error, correlationId, mark)
+        }
+
+        val (transport, transportError) = connectedTransportOrError(owner)
+        if (transportError != null || transport == null) {
+            val error = transportError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 904, "Transport resolution failed", retryable = false)
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.PRESENCE, error))
+            return errResult(error, correlationId, mark)
+        }
+
         val raw = XmlWriter.render(xml("presence") {
             request.to?.let { attr("to", it.toString()) }
             attr("from", transport.boundJid)
@@ -343,24 +546,51 @@ internal class CoreTakina(
 
         val scope = Scope.Account(owner)
         val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope)
-            ?: return TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 202, "Outbound presence dropped", retryable = false))
+        if (processed == null) {
+            val error = TakinaErrors.of(ErrorDomain.PIPELINE, 202, "Outbound presence dropped", retryable = false)
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.PRESENCE, error))
+            return errResult(error, correlationId, mark)
+        }
 
         return runCatching {
-            events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = "presence"))
+            events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.PRESENCE))
             transport.sendRaw(processed)
-            TakinaResult.Ok(PresenceOutcome())
-        }.getOrElse {
-            events.emit(RequestFailedEvent(owner, "presence", it.message ?: "presence send failed"))
-            TakinaResult.Err(TakinaErrors.of(ErrorDomain.TRANSPORT, 102, it.message ?: "presence send failed", retryable = true, cause = it))
+            okResult(PresenceOutcome(), correlationId, mark)
+        }.getOrElse { failure ->
+            val error = failure.toTakinaError(
+                domain = ErrorDomain.TRANSPORT,
+                number = 102,
+                retryable = true,
+                fallbackMessage = failure.message ?: "presence send failed",
+            )
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.PRESENCE, error))
+            errResult(error, correlationId, mark)
         }
     }
 
     override suspend fun sendIq(request: IqRequest): TakinaResult<IqOutcome> {
-        ensureStarted()
+        val correlationId = request.id
+        val mark = TimeSource.Monotonic.markNow()
+        inactiveErrorOrNull()?.let { error ->
+            events.emit(RequestFailedEvent(request.from, CoreRequestTypes.IQ, error))
+            return errResult(error, correlationId, mark)
+        }
 
         unifiedPolicy.onNextItemBoundary()
-        val owner = resolveOwner(request.from)
-        val transport = requireConnectedTransport(owner)
+        val (owner, ownerError) = resolveOwnerOrError(request.from)
+        if (ownerError != null || owner == null) {
+            val error = ownerError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 905, "Owner resolution failed", retryable = false)
+            events.emit(RequestFailedEvent(request.from, CoreRequestTypes.REQUEST_ROUTING, error))
+            return errResult(error, correlationId, mark)
+        }
+
+        val (transport, transportError) = connectedTransportOrError(owner)
+        if (transportError != null || transport == null) {
+            val error = transportError ?: TakinaErrors.of(ErrorDomain.INTERNAL, 906, "Transport resolution failed", retryable = false)
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.IQ, error))
+            return errResult(error, correlationId, mark)
+        }
+
         val raw = XmlWriter.render(xml("iq") {
             attr("id", request.id)
             attr("type", request.type)
@@ -369,15 +599,26 @@ internal class CoreTakina(
             request.payload?.let { node(it) }
         })
         val scope = Scope.Account(owner)
-        val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope) ?: return TakinaResult.Err(TakinaErrors.of(ErrorDomain.PIPELINE, 203, "Outbound iq dropped", retryable = false))
+        val processed = pipelineRuntime.executeOutbound(OutboundFrame(raw, OutboundClassification.BUSINESS, owner), scope)
+        if (processed == null) {
+            val error = TakinaErrors.of(ErrorDomain.PIPELINE, 203, "Outbound iq dropped", retryable = false)
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.IQ, error))
+            return errResult(error, correlationId, mark)
+        }
 
         return runCatching {
-            events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = "iq"))
+            events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.IQ))
             transport.sendRaw(processed)
-            TakinaResult.Ok(IqOutcome(request.id))
-        }.getOrElse {
-            events.emit(RequestFailedEvent(owner, "iq", it.message ?: "iq send failed"))
-            TakinaResult.Err(TakinaErrors.of(ErrorDomain.TRANSPORT, 103, it.message ?: "iq send failed", retryable = true, cause = it))
+            okResult(IqOutcome(request.id), correlationId, mark)
+        }.getOrElse { failure ->
+            val error = failure.toTakinaError(
+                domain = ErrorDomain.TRANSPORT,
+                number = 103,
+                retryable = true,
+                fallbackMessage = failure.message ?: "iq send failed",
+            )
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.IQ, error))
+            errResult(error, correlationId, mark)
         }
     }
 
@@ -394,7 +635,13 @@ internal class CoreTakina(
         val eventPath = result.path
 
         when {
-            result.rejectedReason != null -> events.emit(ConfigRejectedEvent(eventPath, result.rejectedReason))
+            result.rejectedReason != null -> events.emit(
+                ConfigRejectedEvent(
+                    path = eventPath,
+                    rejectCode = result.rejectCode ?: ConfigRejectCode.VALIDATION_FAILED,
+                    reason = result.rejectedReason,
+                ),
+            )
             result.applied -> events.emit(ConfigAppliedEvent(eventPath, result.applyMode.name))
             else -> events.emit(ConfigApplyDeferredEvent(eventPath, result.applyMode.name))
         }
@@ -427,7 +674,7 @@ internal class CoreTakina(
                 if (machine.currentState() != ConnectionState.RECONNECT_WAIT) transition(owner, machine, ConnectionState.RECONNECT_WAIT)
                 events.emit(ReconnectScheduledEvent(owner, attempt, delay))
             }, connectAttempt = {
-                runCatching { connect(owner) }.isSuccess
+                connect(owner) is TakinaResult.Ok
             }
         )
 
@@ -515,12 +762,25 @@ internal class CoreTakina(
         }
     }
 
-    private fun transition(owner: BareJid, machine: ConnectionStateMachine, next: ConnectionState) {
-        if (machine.currentState() == next) return
+    private fun transition(owner: BareJid, machine: ConnectionStateMachine, next: ConnectionState): TakinaError? {
+        if (machine.currentState() == next) return null
         val result = machine.transitionTo(next)
         if (!result.accepted) {
-            events.emit(RequestFailedEvent(owner, "state-transition", "Illegal transition ${result.from} -> $next"))
-            return
+            val error = result.errorCode?.let { code ->
+                TakinaError(
+                    code = code,
+                    domain = ErrorDomain.STREAM,
+                    message = "Illegal transition ${result.from} -> $next",
+                    retryable = false,
+                )
+            } ?: TakinaErrors.of(
+                domain = ErrorDomain.STREAM,
+                number = 101,
+                message = "Illegal transition ${result.from} -> $next",
+                retryable = false,
+            )
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.STATE_TRANSITION, error))
+            return error
         }
         runtime.setConnectionState(owner, next)
         runBlocking {
@@ -531,6 +791,7 @@ internal class CoreTakina(
             }
         }
         events.emit(ConnectionStateChangedEvent(owner, result.from, result.to))
+        return null
     }
 
     private fun installAccount(account: AccountDefinition) {
@@ -543,20 +804,28 @@ internal class CoreTakina(
         events.emit(AccountAddedEvent(account.jid))
     }
 
-    private fun requireConnectedTransport(owner: BareJid): XmppTransport {
+    private fun connectedTransportOrError(owner: BareJid): Pair<XmppTransport?, TakinaError?> {
         val transport = transports[owner]
         if (transport == null || !transport.isConnected) {
-            throw IllegalStateException("Account $owner is not connected")
+            return null to TakinaErrors.of(
+                domain = ErrorDomain.TRANSPORT,
+                number = 106,
+                message = "Account $owner is not connected",
+                retryable = true,
+            )
         }
-        return transport
+        return transport to null
     }
 
-    private fun resolveOwner(requested: BareJid?): BareJid {
-        if (requested != null) return requested
-        if (accounts.size == 1) return accounts.keys.first()
-        val error = TakinaErrors.of(ErrorDomain.CONFIG, 301, "Ambiguous account owner for request", retryable = false)
-        events.emit(RequestFailedEvent(null, "request-routing", error.message))
-        throw IllegalStateException(error.message)
+    private fun resolveOwnerOrError(requested: BareJid?): Pair<BareJid?, TakinaError?> {
+        if (requested != null) return requested to null
+        if (accounts.size == 1) return accounts.keys.first() to null
+        return null to TakinaErrors.of(
+            domain = ErrorDomain.CONFIG,
+            number = 301,
+            message = "Ambiguous account owner for request",
+            retryable = false,
+        )
     }
 
     private fun applyConfigPreset(configPreset: ConfigPreset) {
@@ -585,6 +854,33 @@ internal class CoreTakina(
         FeaturePreset.Full -> emptyList()
     }
 
+    private fun inactiveErrorOrNull(): TakinaError? = if (started && !shutdown) {
+        null
+    } else {
+        TakinaErrors.of(
+            domain = ErrorDomain.INTERNAL,
+            number = 100,
+            message = "Takina is not active",
+            retryable = false,
+        )
+    }
+
+    private fun <T> okResult(value: T, correlationId: String?, mark: TimeMark): TakinaResult.Ok<T> = TakinaResult.Ok(
+        value = value,
+        meta = ResultMeta(
+            correlationId = correlationId,
+            elapsed = mark.elapsedNow(),
+        ),
+    )
+
+    private fun errResult(error: TakinaError, correlationId: String?, mark: TimeMark): TakinaResult.Err = TakinaResult.Err(
+        error = error,
+        meta = ResultMeta(
+            correlationId = correlationId,
+            elapsed = mark.elapsedNow(),
+        )
+    )
+
     private fun ensureStarted() = check(started && !shutdown) { "Takina is not active" }
 
     private fun AccountDefinition.getConnectionConfig(): ConnectionConfig {
@@ -602,3 +898,4 @@ internal class CoreTakina(
         )
     }
 }
+

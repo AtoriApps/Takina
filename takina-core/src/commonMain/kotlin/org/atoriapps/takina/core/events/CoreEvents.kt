@@ -1,8 +1,13 @@
 package org.atoriapps.takina.core.events
 
 import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.controlling.ConfigRejectCode
+import org.atoriapps.takina.core.error.TakinaError
+import org.atoriapps.takina.core.models.BatchExecutionOutcome
 import org.atoriapps.takina.core.models.BareJid
+import org.atoriapps.takina.core.models.TakinaResult
 import org.atoriapps.takina.core.pipeline.OutboundClassification
+import org.atoriapps.takina.core.pipeline.PipelineDirection
 
 data class TakinaStartedEvent(val reason: String = "startup") : BasicTakinaEvent("TakinaStartedEvent") {
     companion object : StaticEventProvider<TakinaStartedEvent>(TakinaStartedEvent::class)
@@ -40,7 +45,11 @@ data class ConfigApplyDeferredEvent(val path: String, val applyMode: String) : B
     companion object : StaticEventProvider<ConfigApplyDeferredEvent>(ConfigApplyDeferredEvent::class)
 }
 
-data class ConfigRejectedEvent(val path: String, val reason: String) : BasicTakinaEvent("ConfigRejectedEvent") {
+data class ConfigRejectedEvent(
+    val path: String,
+    val rejectCode: ConfigRejectCode,
+    val reason: String,
+) : BasicTakinaEvent("ConfigRejectedEvent") {
     companion object : StaticEventProvider<ConfigRejectedEvent>(ConfigRejectedEvent::class)
 }
 
@@ -60,6 +69,20 @@ data class ReconnectScheduledEvent(val owner: BareJid, val attempt: Int, val del
 
 data class ReconnectExhaustedEvent(val owner: BareJid, val attempts: Int) : BasicTakinaEvent("ReconnectExhaustedEvent") {
     companion object : StaticEventProvider<ReconnectExhaustedEvent>(ReconnectExhaustedEvent::class)
+}
+
+data class AllConnectEvent(
+    val outcome: BatchExecutionOutcome,
+    val results: Map<BareJid, TakinaResult<Unit>>,
+) : BasicTakinaEvent("AllConnectEvent") {
+    companion object : StaticEventProvider<AllConnectEvent>(AllConnectEvent::class)
+}
+
+data class AllDisconnectEvent(
+    val outcome: BatchExecutionOutcome,
+    val results: Map<BareJid, TakinaResult<Unit>>,
+) : BasicTakinaEvent("AllDisconnectEvent") {
+    companion object : StaticEventProvider<AllDisconnectEvent>(AllDisconnectEvent::class)
 }
 
 data class SessionReadyEvent(val owner: BareJid) : BasicTakinaEvent("SessionReadyEvent") {
@@ -103,12 +126,25 @@ data class MessageSentEvent(val owner: BareJid, val to: BareJid, val body: Strin
     companion object : StaticEventProvider<MessageSentEvent>(MessageSentEvent::class)
 }
 
-data class MessageSendFailedEvent(val owner: BareJid, val to: BareJid?, val reason: String) : BasicTakinaEvent("MessageSendFailedEvent") {
+data class MessageSendFailedEvent(val owner: BareJid, val to: BareJid?, val error: TakinaError) : BasicTakinaEvent("MessageSendFailedEvent") {
     companion object : StaticEventProvider<MessageSendFailedEvent>(MessageSendFailedEvent::class)
 }
 
-data class RequestFailedEvent(val owner: BareJid?, val requestType: String, val reason: String) : BasicTakinaEvent("RequestFailedEvent") {
+data class RequestFailedEvent(
+    val owner: BareJid?,
+    val requestType: String,
+    val error: TakinaError,
+) : BasicTakinaEvent("RequestFailedEvent") {
     companion object : StaticEventProvider<RequestFailedEvent>(RequestFailedEvent::class)
+}
+
+data class PipelineNodeFailedEvent(
+    val owner: BareJid?,
+    val direction: PipelineDirection,
+    val nodeKey: String,
+    val error: TakinaError,
+) : BasicTakinaEvent("PipelineNodeFailedEvent") {
+    companion object : StaticEventProvider<PipelineNodeFailedEvent>(PipelineNodeFailedEvent::class)
 }
 
 data class RequestTimeoutEvent(val owner: BareJid?, val requestType: String) : BasicTakinaEvent("RequestTimeoutEvent") {

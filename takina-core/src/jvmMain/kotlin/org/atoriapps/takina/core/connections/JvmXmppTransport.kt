@@ -26,6 +26,9 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.cancellation.CancellationException
+import org.atoriapps.takina.core.error.ErrorDomain
+import org.atoriapps.takina.core.error.TakinaErrors
+import org.atoriapps.takina.core.error.TakinaFailureException
 import org.atoriapps.takina.core.xml.XmlElement
 import org.atoriapps.takina.core.xml.JvmXmlFrameReader
 import org.atoriapps.takina.core.xml.XmlParser
@@ -52,54 +55,103 @@ internal class JvmXmppTransport(
     override val isConnected: Boolean
         get() = socket?.isConnected == true && socket?.isClosed == false && boundJid != null
 
+    private fun fail(
+        domain: ErrorDomain,
+        number: Int,
+        message: String,
+        retryable: Boolean,
+        cause: Throwable? = null,
+    ): Nothing {
+        throw TakinaFailureException(
+            TakinaErrors.of(
+                domain = domain,
+                number = number,
+                message = message,
+                retryable = retryable,
+                cause = cause,
+            ),
+        )
+    }
+
     override suspend fun connect(password: String) = withContext(Dispatchers.IO) {
         if (isConnected) return@withContext
         closedByClient = false
 
-        callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
-        connectSocket()
+        try {
+            callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
+            connectSocket()
 
-        if (config.securityMode == SecurityMode.DIRECT_TLS) {
-            callbacks.onStateChanged(ConnectionState.TLS_HANDSHAKING)
-            upgradeToTls()
-        }
+            if (config.securityMode == SecurityMode.DIRECT_TLS) {
+                callbacks.onStateChanged(ConnectionState.TLS_HANDSHAKING)
+                upgradeToTls()
+            }
 
-        callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
-        var features = openStreamAndReadFeatures()
+            callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
+            var features = openStreamAndReadFeatures()
 
-        if (config.securityMode == SecurityMode.START_TLS) {
-            if (features.firstDescendant("starttls") == null) throw IllegalStateException("Server does not advertise STARTTLS")
+            if (config.securityMode == SecurityMode.START_TLS) {
+                if (features.firstDescendant("starttls") == null) {
+                    fail(ErrorDomain.TLS, 201, "Server does not advertise STARTTLS", retryable = false)
+                }
 
-            callbacks.onStateChanged(ConnectionState.TLS_HANDSHAKING)
-            requestStartTls()
-            upgradeToTls()
+                callbacks.onStateChanged(ConnectionState.TLS_HANDSHAKING)
+                requestStartTls()
+                upgradeToTls()
+
+                callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
+                features = openStreamAndReadFeatures()
+            }
+
+            callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
+            authenticate(features, password)
 
             callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
             features = openStreamAndReadFeatures()
+            if (features.firstDescendant("bind") == null) {
+                fail(ErrorDomain.BIND, 201, "Server does not advertise resource binding", retryable = false)
+            }
+
+            callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
+            performResourceBind()
+            callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+
+            startReadLoop()
+        } catch (t: Throwable) {
+            if (t is CancellationException || t is TakinaFailureException) throw t
+            fail(
+                domain = ErrorDomain.TRANSPORT,
+                number = 100,
+                message = t.message ?: "Connection setup failed",
+                retryable = true,
+                cause = t,
+            )
         }
-
-        callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
-        authenticate(features, password)
-
-        callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
-        features = openStreamAndReadFeatures()
-        if (features.firstDescendant("bind") == null) throw IllegalStateException("Server does not advertise resource binding")
-
-        callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
-        performResourceBind()
-        callbacks.onStateChanged(ConnectionState.ESTABLISHED)
-
-        startReadLoop()
     }
 
     override suspend fun sendRaw(xml: String) {
         val bytes = xml.toByteArray(Charsets.UTF_8)
 
         writeLock.withLock {
-            val out = output ?: error("Transport not connected")
-            withContext(Dispatchers.IO) {
-                out.write(bytes)
-                out.flush()
+            val out = output ?: fail(
+                domain = ErrorDomain.TRANSPORT,
+                number = 111,
+                message = "Transport not connected",
+                retryable = true,
+            )
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    out.write(bytes)
+                    out.flush()
+                }
+            }.getOrElse { t ->
+                if (t is CancellationException || t is TakinaFailureException) throw t
+                fail(
+                    domain = ErrorDomain.TRANSPORT,
+                    number = 114,
+                    message = t.message ?: "Failed to write outbound XML frame",
+                    retryable = true,
+                    cause = t,
+                )
             }
         }
     }
@@ -111,24 +163,39 @@ internal class JvmXmppTransport(
     }
 
     private suspend fun connectSocket() = withContext(Dispatchers.IO) {
-        val base = Socket()
-        base.soTimeout = config.connectTimeoutMillis
-        base.connect(InetSocketAddress(config.host, config.port), config.connectTimeoutMillis)
-        socket = base
-        input = base.getInputStream()
-        output = base.getOutputStream()
-        reader = JvmXmlFrameReader(input!!)
+        runCatching {
+            val base = Socket()
+            base.soTimeout = config.connectTimeoutMillis
+            base.connect(InetSocketAddress(config.host, config.port), config.connectTimeoutMillis)
+            socket = base
+            input = base.getInputStream()
+            output = base.getOutputStream()
+            reader = JvmXmlFrameReader(input!!)
+        }.getOrElse { t ->
+            if (t is CancellationException || t is TakinaFailureException) throw t
+            fail(
+                domain = ErrorDomain.TRANSPORT,
+                number = 120,
+                message = t.message ?: "TCP connect failed",
+                retryable = true,
+                cause = t,
+            )
+        }
     }
 
     private suspend fun openStreamAndReadFeatures(): XmlElement {
         sendRaw(streamOpen())
         val openFrame = readRequiredFrame("stream open")
         val openTag = XmlParser.parseStartTagOrNull(openFrame)
-        if (openTag?.localName != "stream") throw IllegalStateException("Expected stream:stream, got: $openFrame")
+        if (openTag?.localName != "stream") {
+            fail(ErrorDomain.STREAM, 201, "Expected stream:stream, got: $openFrame", retryable = true)
+        }
 
         val featuresFrame = readRequiredFrame("stream features")
         val features = XmlParser.parseElementOrNull(featuresFrame)
-        if (features?.localName != "features") throw IllegalStateException("Expected stream:features, got: $featuresFrame")
+        if (features?.localName != "features") {
+            fail(ErrorDomain.STREAM, 202, "Expected stream:features, got: $featuresFrame", retryable = true)
+        }
         return features
     }
 
@@ -139,21 +206,28 @@ internal class JvmXmppTransport(
         }))
         val proceedFrame = readRequiredFrame("starttls proceed")
         val proceed = XmlParser.parseElementOrNull(proceedFrame)
-        if (proceed?.localName != "proceed") throw IllegalStateException("STARTTLS failed: $proceedFrame")
+        if (proceed?.localName != "proceed") {
+            fail(ErrorDomain.TLS, 202, "STARTTLS failed: $proceedFrame", retryable = true)
+        }
     }
 
     private suspend fun authenticate(features: XmlElement, password: String) {
         val serverMechanisms = features.descendants("mechanism").map { it.textContent().trim().uppercase() }.toSet()
-        if (serverMechanisms.isEmpty()) throw IllegalStateException("Server does not advertise SASL mechanisms")
+        if (serverMechanisms.isEmpty()) {
+            fail(ErrorDomain.AUTH, 201, "Server does not advertise SASL mechanisms", retryable = false)
+        }
 
         val preferred = config.saslMechanisms.map { it.uppercase() }
         val common = preferred.filter { it in serverMechanisms }
         if (common.isEmpty()) {
-            throw IllegalStateException("No common SASL mechanism. client=$preferred server=$serverMechanisms")
+            fail(ErrorDomain.AUTH, 202, "No common SASL mechanism. client=$preferred server=$serverMechanisms", retryable = false)
         }
         val selected = common.firstOrNull { mechanism -> isLocallySupportedSaslMechanism(mechanism, password) }
-            ?: throw IllegalStateException(
+            ?: fail(
+                ErrorDomain.AUTH,
+                203,
                 "No locally supported SASL mechanism. common=$common (JVM provider may miss SCRAM/DIGEST; try enabling PLAIN or adding provider)",
+                retryable = false,
             )
 
         if (selected == "PLAIN") {
@@ -189,9 +263,14 @@ internal class JvmXmppTransport(
         }))
 
         val challengeFrame = readRequiredFrame("scram challenge")
-        val challengeNode = XmlParser.parseElementOrNull(challengeFrame) ?: throw IllegalStateException("Unexpected non-xml SCRAM challenge: $challengeFrame")
-        if (challengeNode.localName == "failure") throw IllegalStateException("SASL auth failed via ${mechanism.mechanismName}: $challengeFrame")
-        if (challengeNode.localName != "challenge") throw IllegalStateException("Unexpected SCRAM frame via ${mechanism.mechanismName}: $challengeFrame")
+        val challengeNode = XmlParser.parseElementOrNull(challengeFrame)
+            ?: fail(ErrorDomain.AUTH, 204, "Unexpected non-xml SCRAM challenge: $challengeFrame", retryable = true)
+        if (challengeNode.localName == "failure") {
+            fail(ErrorDomain.AUTH, 205, "SASL auth failed via ${mechanism.mechanismName}: $challengeFrame", retryable = false)
+        }
+        if (challengeNode.localName != "challenge") {
+            fail(ErrorDomain.AUTH, 206, "Unexpected SCRAM frame via ${mechanism.mechanismName}: $challengeFrame", retryable = true)
+        }
         val serverFirstB64 = challengeNode.textContent().trim()
         val serverFirst = String(Base64.getDecoder().decode(serverFirstB64), Charsets.UTF_8)
 
@@ -208,7 +287,8 @@ internal class JvmXmppTransport(
         }))
 
         val successFrame = readRequiredFrame("scram success")
-        val successNode = XmlParser.parseElementOrNull(successFrame) ?: throw IllegalStateException("Unexpected non-xml SCRAM success frame: $successFrame")
+        val successNode = XmlParser.parseElementOrNull(successFrame)
+            ?: fail(ErrorDomain.AUTH, 207, "Unexpected non-xml SCRAM success frame: $successFrame", retryable = true)
         when (successNode.localName) {
             "success" -> {
                 val successPayload = successNode.textContent().trim()
@@ -216,13 +296,13 @@ internal class JvmXmppTransport(
                     val decoded = String(Base64.getDecoder().decode(successPayload), Charsets.UTF_8)
                     val verifier = JvmScram.extractServerVerifier(decoded)
                     if (verifier != null && !MessageDigest.isEqual(verifier.toByteArray(), final.expectedServerSignatureBase64.toByteArray()))
-                        throw IllegalStateException("SCRAM server signature verification failed")
+                        fail(ErrorDomain.AUTH, 208, "SCRAM server signature verification failed", retryable = false)
                 }
             }
 
-            "failure" -> throw IllegalStateException("SASL auth failed via ${mechanism.mechanismName}: $successFrame")
+            "failure" -> fail(ErrorDomain.AUTH, 209, "SASL auth failed via ${mechanism.mechanismName}: $successFrame", retryable = false)
 
-            else -> throw IllegalStateException("Unexpected SCRAM final frame via ${mechanism.mechanismName}: $successFrame")
+            else -> fail(ErrorDomain.AUTH, 210, "Unexpected SCRAM final frame via ${mechanism.mechanismName}: $successFrame", retryable = true)
         }
     }
 
@@ -238,13 +318,14 @@ internal class JvmXmppTransport(
         val response = XmlParser.parseElementOrNull(responseFrame)
         when (response?.localName) {
             "success" -> Unit
-            "failure" -> throw IllegalStateException("SASL auth failed: $responseFrame")
-            else -> throw IllegalStateException("Unexpected SASL response: $responseFrame")
+            "failure" -> fail(ErrorDomain.AUTH, 211, "SASL auth failed: $responseFrame", retryable = false)
+            else -> fail(ErrorDomain.AUTH, 212, "Unexpected SASL response: $responseFrame", retryable = true)
         }
     }
 
     private suspend fun authenticateViaSaslClient(mechanism: String, password: String) {
-        val client = createSaslClient(mechanism, password) ?: throw IllegalStateException("SASL client not available for mechanism: $mechanism")
+        val client = createSaslClient(mechanism, password)
+            ?: fail(ErrorDomain.AUTH, 213, "SASL client not available for mechanism: $mechanism", retryable = false)
 
         val initial = if (client.hasInitialResponse()) client.evaluateChallenge(ByteArray(0)) else null
         if (initial == null) sendRaw(XmlWriter.render(xml("auth") {
@@ -259,7 +340,8 @@ internal class JvmXmppTransport(
 
         while (true) {
             val frame = readRequiredFrame("sasl challenge or success")
-            val node = XmlParser.parseElementOrNull(frame) ?: throw IllegalStateException("Unexpected non-xml SASL frame via $mechanism: $frame")
+            val node = XmlParser.parseElementOrNull(frame)
+                ?: fail(ErrorDomain.AUTH, 214, "Unexpected non-xml SASL frame via $mechanism: $frame", retryable = true)
             when (node.localName) {
                 "challenge" -> {
                     val challengeRaw = node.textContent()
@@ -283,9 +365,9 @@ internal class JvmXmppTransport(
                     return
                 }
 
-                "failure" -> throw IllegalStateException("SASL auth failed via $mechanism: $frame")
+                "failure" -> fail(ErrorDomain.AUTH, 215, "SASL auth failed via $mechanism: $frame", retryable = false)
 
-                else -> throw IllegalStateException("Unexpected SASL frame via $mechanism: $frame")
+                else -> fail(ErrorDomain.AUTH, 216, "Unexpected SASL frame via $mechanism: $frame", retryable = true)
             }
         }
     }
@@ -304,27 +386,50 @@ internal class JvmXmppTransport(
 
         val resultFrame = readRequiredFrame("bind result")
         val result = XmlParser.parseElementOrNull(resultFrame)
-        if (result?.localName != "iq" || result.attribute("type") != "result") throw IllegalStateException("Bind failed: $resultFrame")
+        if (result?.localName != "iq" || result.attribute("type") != "result") {
+            fail(ErrorDomain.BIND, 202, "Bind failed: $resultFrame", retryable = true)
+        }
         val jid = result.firstDescendant("jid")?.textContent()
         boundJid = jid ?: "${config.owner}/${config.resource}"
     }
 
     private suspend fun readRequiredFrame(label: String): String = withContext(Dispatchers.IO) {
-        val value = reader?.nextFrame() ?: throw IllegalStateException("EOF while waiting for $label")
+        val value = reader?.nextFrame() ?: fail(
+            domain = ErrorDomain.TRANSPORT,
+            number = 112,
+            message = "EOF while waiting for $label",
+            retryable = true,
+        )
         value
     }
 
     private suspend fun upgradeToTls() = withContext(Dispatchers.IO) {
-        val current = socket ?: error("socket is null")
-        val sslContext = if (config.trustAllCertificates) insecureSslContext() else SSLContext.getDefault()
-        val sslSocket = sslContext.socketFactory.createSocket(current, config.host, config.port, true) as SSLSocket
-        sslSocket.useClientMode = true
-        sslSocket.startHandshake()
+        val current = socket ?: fail(
+            domain = ErrorDomain.TRANSPORT,
+            number = 113,
+            message = "socket is null",
+            retryable = false,
+        )
+        runCatching {
+            val sslContext = if (config.trustAllCertificates) insecureSslContext() else SSLContext.getDefault()
+            val sslSocket = sslContext.socketFactory.createSocket(current, config.host, config.port, true) as SSLSocket
+            sslSocket.useClientMode = true
+            sslSocket.startHandshake()
 
-        socket = sslSocket
-        input = sslSocket.inputStream
-        output = sslSocket.outputStream
-        reader = JvmXmlFrameReader(input!!)
+            socket = sslSocket
+            input = sslSocket.inputStream
+            output = sslSocket.outputStream
+            reader = JvmXmlFrameReader(input!!)
+        }.getOrElse { t ->
+            if (t is CancellationException || t is TakinaFailureException) throw t
+            fail(
+                domain = ErrorDomain.TLS,
+                number = 203,
+                message = t.message ?: "TLS upgrade failed",
+                retryable = true,
+                cause = t,
+            )
+        }
     }
 
     private fun startReadLoop() {

@@ -12,15 +12,20 @@ import org.atoriapps.takina.core.connections.XmppTransport
 import org.atoriapps.takina.core.connections.XmppTransportCallbacks
 import org.atoriapps.takina.core.connections.XmppTransportFactoryRegistry
 import org.atoriapps.takina.core.controlling.ApplyMode
+import org.atoriapps.takina.core.controlling.ConfigRejectCode
 import org.atoriapps.takina.core.controlling.ConnectionConfigPaths
 import org.atoriapps.takina.core.controlling.ReconnectConfigPaths
+import org.atoriapps.takina.core.events.AllConnectEvent
 import org.atoriapps.takina.core.events.ConfigRejectedEvent
 import org.atoriapps.takina.core.events.FinalFrameOutboundEvent
+import org.atoriapps.takina.core.events.PipelineNodeFailedEvent
 import org.atoriapps.takina.core.events.RawFrameInboundEvent
 import org.atoriapps.takina.core.features.TakinaFeature
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
+import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.ScopeKind
+import org.atoriapps.takina.core.models.TakinaResult
 import org.atoriapps.takina.core.models.toBareJid
 import org.atoriapps.takina.core.pipeline.NodeResult
 import org.atoriapps.takina.core.pipeline.OutboundFrame
@@ -31,6 +36,7 @@ import org.atoriapps.takina.core.xml.xml
 class CoreSemanticsTest {
     private val alice = "alice@example.com".toBareJid()
     private val bob = "bob@example.com".toBareJid()
+    private val carol = "carol@example.com".toBareJid()
 
     private class DummyFeature : TakinaFeature {
         override val supportedScopes: Set<ScopeKind> = setOf(ScopeKind.GLOBAL, ScopeKind.MESSAGE)
@@ -88,6 +94,21 @@ class CoreSemanticsTest {
         override fun create(): MarkerOutboundFeature = MarkerOutboundFeature()
     }
 
+    private class ThrowingOutboundFeature : TakinaFeature {
+        override val supportedScopes: Set<ScopeKind> = setOf(ScopeKind.GLOBAL, ScopeKind.ACCOUNT, ScopeKind.CONVERSATION, ScopeKind.MESSAGE)
+        override val applyMode: ApplyMode = ApplyMode.NEXT_ITEM
+        override fun outboundNodes(): List<OutboundNode> = listOf(object : OutboundNode {
+            override val key: String = "throwing-outbound"
+            override suspend fun execute(frame: OutboundFrame): NodeResult = error("node boom")
+        })
+    }
+
+    private object ThrowingOutboundFeatureProvider : TakinaFeatureProvider<ThrowingOutboundFeature> {
+        override val id: String = "throwing-outbound"
+        override val featureType = ThrowingOutboundFeature::class
+        override fun create(): ThrowingOutboundFeature = ThrowingOutboundFeature()
+    }
+
     @Test
     fun `core startup initializes runtime states`() = runTest {
         val takina = createTakina {
@@ -103,6 +124,7 @@ class CoreSemanticsTest {
     @Test
     fun `config apply emits rejected event for invalid value`() = runTest {
         var rejected = 0
+        var rejectCode: ConfigRejectCode? = null
         val takina = createTakina {
             addAccount {
                 jid = alice
@@ -110,13 +132,17 @@ class CoreSemanticsTest {
             }
         }
 
-        takina.events.on(ConfigRejectedEvent::class) { rejected += 1 }
+        takina.events.on(ConfigRejectedEvent::class) {
+            rejected += 1
+            rejectCode = this.rejectCode
+        }
 
         takina.configs {
             set(ReconnectConfigPaths.ENABLED, "false")
         }
 
         assertEquals(1, rejected)
+        assertEquals(ConfigRejectCode.TYPE_MISMATCH, rejectCode)
     }
 
     @Test
@@ -205,6 +231,127 @@ class CoreSemanticsTest {
 
             assertEquals(3, sent.size)
             assertTrue(sent.all { it.startsWith("<!--marker-->") })
+            takina.shutdown()
+        } finally {
+            XmppTransportFactoryRegistry.factory = oldFactory
+        }
+    }
+
+    @Test
+    fun `send returns Err when account is not connected`() = runTest {
+        val takina = createTakina {
+            addAccount {
+                jid = alice
+                password = "secret"
+            }
+        }
+
+        val result = takina.request.message {
+            to = bob
+            body = "offline"
+        }.send()
+
+        assertTrue(result is TakinaResult.Err)
+        assertEquals("TAKINA-TRANSPORT-106", result.error.code)
+    }
+
+    @Test
+    fun `send returns Err when owner is ambiguous`() = runTest {
+        val takina = createTakina {
+            addAccount { jid = alice; password = "secret" }
+            addAccount { jid = carol; password = "secret" }
+        }
+
+        val result = takina.request.message {
+            to = bob
+            body = "ambiguous"
+        }.send()
+
+        assertTrue(result is TakinaResult.Err)
+        assertEquals("TAKINA-CONFIG-301", result.error.code)
+    }
+
+    @Test
+    fun `pipeline node exception emits failure event and send continues`() = runTest {
+        val sent = mutableListOf<String>()
+        val oldFactory = XmppTransportFactoryRegistry.factory
+        XmppTransportFactoryRegistry.factory = { config, callbacks -> RecordingTransport(config, callbacks, sent) }
+        try {
+            var pipelineFailed = 0
+            val takina = createTakina {
+                addAccount { jid = alice; password = "secret" }
+                features { install(ThrowingOutboundFeatureProvider) }
+            }
+            takina.events.on(PipelineNodeFailedEvent::class) {
+                pipelineFailed += 1
+                assertEquals("throwing-outbound", nodeKey)
+            }
+
+            takina.connect(alice)
+            val result = takina.request.message { to = bob; body = "hello" }.send()
+
+            assertTrue(result is TakinaResult.Ok)
+            assertEquals(1, pipelineFailed)
+            takina.shutdown()
+        } finally {
+            XmppTransportFactoryRegistry.factory = oldFactory
+        }
+    }
+
+    @Test
+    fun `connectAll returns completion summary and emits aggregated results when some accounts fail`() = runTest {
+        val oldFactory = XmppTransportFactoryRegistry.factory
+        XmppTransportFactoryRegistry.factory = { config, callbacks ->
+            object : XmppTransport {
+                override var boundJid: String? = null
+                private var connected = false
+                override val isConnected: Boolean get() = connected
+
+                override suspend fun connect(password: String) {
+                    if (config.owner == carol) error("forced connect failure")
+                    callbacks.onStateChanged(ConnectionState.TCP_CONNECTING)
+                    callbacks.onStateChanged(ConnectionState.STREAM_OPENING)
+                    callbacks.onStateChanged(ConnectionState.AUTHENTICATING)
+                    callbacks.onStateChanged(ConnectionState.BINDING_RESOURCE)
+                    boundJid = "${config.owner}/${config.resource}"
+                    connected = true
+                    callbacks.onStateChanged(ConnectionState.ESTABLISHED)
+                }
+
+                override suspend fun sendRaw(xml: String) = Unit
+
+                override suspend fun disconnect() {
+                    connected = false
+                    boundJid = null
+                    callbacks.onStateChanged(ConnectionState.CLOSED)
+                }
+            }
+        }
+        try {
+            var allConnectResults: Map<BareJid, TakinaResult<Unit>>? = null
+            var allConnectFailed: Int? = null
+            var allConnectSucceed: Int? = null
+            val takina = createTakina {
+                addAccount { jid = alice; password = "secret" }
+                addAccount { jid = carol; password = "secret" }
+            }
+            takina.events.on(AllConnectEvent::class) {
+                allConnectResults = results
+                allConnectSucceed = outcome.succeed
+                allConnectFailed = outcome.failed
+            }
+
+            val result = takina.connectAll()
+            assertTrue(result is TakinaResult.Ok)
+            assertEquals(1, result.value.succeed)
+            assertEquals(1, result.value.failed)
+            val emitted = requireNotNull(allConnectResults)
+            assertEquals(2, emitted.size)
+            assertTrue(emitted.getValue(alice) is TakinaResult.Ok)
+            assertTrue(emitted.getValue(carol) is TakinaResult.Err)
+            assertEquals(1, allConnectSucceed)
+            assertEquals(1, allConnectFailed)
+
             takina.shutdown()
         } finally {
             XmppTransportFactoryRegistry.factory = oldFactory

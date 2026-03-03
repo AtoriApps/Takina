@@ -548,9 +548,9 @@ room.join {}
 
 .events 下的方法与属性：
 
-- `.events.on(Event){}`
-- `.events.once(Event){}`
-- `.events.removeOn(Event){}`
+- `.events.on(Event){} : EventSubscription`
+- `.events.once(Event){} : EventSubscription`
+- `.events.remove(eventSubscription)`
 - `.events.flow(Event): Flow<Event>`
 
 事件日志开关归属 `config.observability`，不放在 `.events`

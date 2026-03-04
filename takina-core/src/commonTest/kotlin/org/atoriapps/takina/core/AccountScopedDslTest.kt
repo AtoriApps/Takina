@@ -6,6 +6,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import org.atoriapps.takina.core.connections.ConnectionConfig
+import org.atoriapps.takina.core.connections.XmppPreBindNegotiationDecision
+import org.atoriapps.takina.core.connections.XmppPreBindTransport
 import org.atoriapps.takina.core.connections.XmppConnectPhase
 import org.atoriapps.takina.core.connections.XmppSession
 import org.atoriapps.takina.core.connections.XmppTransport
@@ -42,7 +44,7 @@ class AccountScopedDslTest {
         private val config: ConnectionConfig,
         private val configSink: MutableList<ConnectionConfig>,
     ) : XmppTransport {
-        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit, preBindNegotiation: suspend (String, XmppPreBindTransport) -> XmppPreBindNegotiationDecision): XmppSession {
             onPhase(XmppConnectPhase.TCP_CONNECTING)
             onPhase(XmppConnectPhase.STREAM_OPENING)
             onPhase(XmppConnectPhase.AUTHENTICATING)
@@ -243,3 +245,4 @@ class AccountScopedDslTest {
         }
     }
 }
+

@@ -23,7 +23,7 @@ enum class ConnectionState {
     BINDING_RESOURCE,
     ESTABLISHED,
     INTERRUPTED,
-    RESUMING_SM,
+    RESUMING_SM, // TODO：要不要改名以体现普适性，Feature的命名不该进入核心
     RECONNECT_WAIT,
     CLOSED,
 }
@@ -34,8 +34,6 @@ data class TransitionResult(
     val to: ConnectionState,
     val errorCode: String? = null,
 )
-
-// TODO、CHECK：检查一下。另外就是具体XmppTp与Takina的苦命鸳鸯
 
 class ConnectionStateMachine(
     initialState: ConnectionState = ConnectionState.IDLE,
@@ -70,12 +68,12 @@ class ConnectionStateMachine(
             ConnectionState.IDLE to setOf(ConnectionState.TCP_CONNECTING, ConnectionState.CLOSED),
             ConnectionState.TCP_CONNECTING to setOf(ConnectionState.TLS_HANDSHAKING, ConnectionState.STREAM_OPENING, ConnectionState.CLOSED),
             ConnectionState.TLS_HANDSHAKING to setOf(ConnectionState.STREAM_OPENING, ConnectionState.CLOSED),
-            ConnectionState.STREAM_OPENING to setOf(ConnectionState.TLS_HANDSHAKING, ConnectionState.AUTHENTICATING, ConnectionState.BINDING_RESOURCE, ConnectionState.CLOSED,),
+            ConnectionState.STREAM_OPENING to setOf(ConnectionState.TLS_HANDSHAKING, ConnectionState.AUTHENTICATING, ConnectionState.RESUMING_SM, ConnectionState.BINDING_RESOURCE, ConnectionState.CLOSED,),
             ConnectionState.AUTHENTICATING to setOf(ConnectionState.STREAM_OPENING, ConnectionState.BINDING_RESOURCE, ConnectionState.CLOSED),
             ConnectionState.BINDING_RESOURCE to setOf(ConnectionState.ESTABLISHED, ConnectionState.CLOSED),
             ConnectionState.ESTABLISHED to setOf(ConnectionState.INTERRUPTED, ConnectionState.CLOSED),
             ConnectionState.INTERRUPTED to setOf(ConnectionState.RESUMING_SM, ConnectionState.RECONNECT_WAIT, ConnectionState.CLOSED),
-            ConnectionState.RESUMING_SM to setOf(ConnectionState.ESTABLISHED, ConnectionState.RECONNECT_WAIT, ConnectionState.CLOSED),
+            ConnectionState.RESUMING_SM to setOf(ConnectionState.BINDING_RESOURCE, ConnectionState.ESTABLISHED, ConnectionState.RECONNECT_WAIT, ConnectionState.CLOSED),
             ConnectionState.RECONNECT_WAIT to setOf(ConnectionState.TCP_CONNECTING, ConnectionState.CLOSED),
             ConnectionState.CLOSED to setOf(ConnectionState.IDLE, ConnectionState.RECONNECT_WAIT),
         )

@@ -28,6 +28,7 @@ import org.atoriapps.takina.core.utils.IdsUtils
 import org.atoriapps.takina.core.xml.XmlParser
 import org.atoriapps.takina.core.xml.XmlWriter
 import org.atoriapps.takina.core.xml.xml
+import org.atoriapps.takina.features.streammanagement.StreamManagementFeature
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
@@ -71,7 +72,7 @@ interface Takina {
 class AccountContext internal constructor(private val takina: CoreTakina, val owner: BareJid) {
     val request: TakinaRequestApi = TakinaRequestApi(takina, owner)
 
-    // TODO、CHECK：未来要不要提供`.events`？仅监听带我户主的事件。但这样可能要提一个带户主的中间事件层
+    // TODO、CHECK next：未来要不要提供`.events`？仅监听带我户主的事件。但这样可能要提一个带户主的中间事件层
 
     fun capabilities(init: CapabilityDsl.() -> Unit) {
         CapabilityDsl(
@@ -94,7 +95,7 @@ class AccountContext internal constructor(private val takina: CoreTakina, val ow
     suspend fun connect(): TakinaResult<Unit> = takina.connect(owner)
     suspend fun disconnect(): TakinaResult<Unit> = takina.disconnect(owner)
 
-    // CHECK：AccountContext是否该提供`api`入口
+    // CHECK next：AccountContext是否该提供`api`入口
     fun <API : FeatureApi, FEATURE> api(provider: TakinaFeatureProvider<FEATURE>): API where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> = takina.api(provider)
     fun <API : FeatureApi, FEATURE> apiOrNull(provider: TakinaFeatureProvider<FEATURE>): API? where FEATURE : TakinaFeature, FEATURE : ApiProvidingFeature<API> = takina.apiOrNull(provider)
 
@@ -114,15 +115,14 @@ abstract class BaseConversationContext internal constructor(
     }
 }
 
-// TODO：应再提供拉黑等方法，但能力由Feature提供，所以应该是扩展方法？
+// TODO next：应再提供拉黑等方法，但能力由Feature提供，所以应该是扩展方法？
 class ChatContext internal constructor(account: AccountContext, peer: BareJid) : BaseConversationContext(account, peer) {
 }
 
-// TODO、CHECK：我觉得这个类应该由Feature作为扩展提供（未来移走）。因为Muc是Feature提供的。RoomCtx应提供如join、leave的便捷方法
+// TODO、CHECK next：我觉得这个类应该由Feature作为扩展提供（未来移走）。因为Muc是Feature提供的。RoomCtx应提供如join、leave的便捷方法
 class RoomContext internal constructor(account: AccountContext, peer: BareJid) : BaseConversationContext(account, peer) {
 }
 
-// TODO、CHECK：内部要不要拆，会不会太重？
 internal class CoreTakina(
     private val featurePreset: FeaturePreset,
     private val configPreset: ConfigPreset,
@@ -131,12 +131,17 @@ internal class CoreTakina(
     override val events: TakinaEventBus = TakinaEventBus()
 
     private val installedFeatures: List<InstalledFeature> = resolvePresetFeatures(featurePreset) + bootstrapConfiguration.features
-    private val featureRegistry: FeatureRegistry
+    private val installedFeatureIndex: InstalledFeatures
     private val unifiedPolicy: UnifiedPolicy
     private val pipelineRuntime: PipelineRuntime
     override val runtime: TakinaRuntime
     override val request: TakinaRequestApi
     private val featureApisByProvider = mutableMapOf<TakinaFeatureProvider<*>, FeatureApi>()
+    private val lifecycleHooks: List<FeatureContribution<ConnectionLifecycleHook>>
+    private val preBindHooks: List<FeatureContribution<PreBindNegotiationHook>>
+    private val unexpectedDisconnectHooks: List<FeatureContribution<UnexpectedDisconnectHook>>
+    private val outboundBusinessObservers: List<FeatureContribution<OutboundBusinessObserver>>
+    private val inboundStanzaObservers: List<FeatureContribution<InboundStanzaObserver>>
 
     private val accounts = linkedMapOf<BareJid, AccountDefinition>()
     private val stateMachines = linkedMapOf<BareJid, ConnectionStateMachine>()
@@ -146,13 +151,16 @@ internal class CoreTakina(
     private val intentionalDisconnectOwners = mutableSetOf<BareJid>()
     private var started = false
     private var shutdown = false
+    private val connectionOperations = ConnectionOperations()
+    private val requestOperations = RequestOperations()
+    private val inboundOperations = InboundOperations()
 
     init {
         applyFeatureConfigureDrafts(installedFeatures, bootstrapConfiguration.featureConfigureDrafts)
         FeatureTopologyValidator.validateOrThrow(installedFeatures)
 
-        featureRegistry = FeatureRegistry(installedFeatures)
-        unifiedPolicy = UnifiedPolicy(featureRegistry)
+        installedFeatureIndex = InstalledFeatures(installedFeatures)
+        unifiedPolicy = UnifiedPolicy(installedFeatureIndex)
         pipelineRuntime = PipelineRuntime(unifiedPolicy) { failure ->
             val error = failure.cause.toTakinaError(
                 domain = ErrorDomain.PIPELINE,
@@ -171,14 +179,23 @@ internal class CoreTakina(
         }
         runtime = TakinaRuntime(unifiedPolicy, pipelineRuntime)
         request = TakinaRequestApi(this)
+        lifecycleHooks = installedFeatureIndex.lifecycleHooks()
+        preBindHooks = installedFeatureIndex.preBindHooks()
+        unexpectedDisconnectHooks = installedFeatureIndex.unexpectedDisconnectHooks()
+        outboundBusinessObservers = installedFeatureIndex.outboundBusinessObservers()
+        inboundStanzaObservers = installedFeatureIndex.inboundStanzaObservers()
 
-        // 从功能实例提取API和节点并注册
+        installedFeatureIndex.inboundClaimers().forEach { contribution ->
+            pipelineRuntime.registerInboundClaimer(contribution.contribution, contribution.provider)
+        }
+        installedFeatureIndex.inboundNodes().forEach { contribution ->
+            pipelineRuntime.registerInboundNode(contribution.contribution, contribution.provider)
+        }
+        installedFeatureIndex.outboundNodes().forEach { contribution ->
+            pipelineRuntime.registerOutboundNode(contribution.contribution, contribution.provider)
+        }
         installedFeatures.forEach { installed ->
             val feature = installed.feature
-
-            feature.inboundNodes().forEach { pipelineRuntime.registerInboundNode(it, installed.provider) }
-            feature.outboundNodes().forEach { pipelineRuntime.registerOutboundNode(it, installed.provider) }
-
             if (feature is ApiProvidingFeature<*>) featureApisByProvider[installed.provider] = feature.api()
         }
 
@@ -263,7 +280,21 @@ internal class CoreTakina(
         return raw as API
     }
 
-    override suspend fun connect(jid: BareJid): TakinaResult<Unit> {
+    override suspend fun connect(jid: BareJid): TakinaResult<Unit> = connectionOperations.connect(jid)
+
+    override suspend fun disconnect(jid: BareJid): TakinaResult<Unit> = connectionOperations.disconnect(jid)
+
+    override suspend fun connectAll(): TakinaResult<BatchExecutionOutcome> = connectionOperations.connectAll()
+
+    override suspend fun disconnectAll(): TakinaResult<BatchExecutionOutcome> = connectionOperations.disconnectAll()
+
+    override suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome> = requestOperations.sendMessage(request)
+
+    override suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome> = requestOperations.sendPresence(request)
+
+    override suspend fun sendIq(request: IqRequest): TakinaResult<IqOutcome> = requestOperations.sendIq(request)
+
+    private suspend fun connectInternal(jid: BareJid): TakinaResult<Unit> {
         val correlationId = IdsUtils.newPrefixedId("conn")
         val mark = TimeSource.Monotonic.markNow() // 记录开始时间点
 
@@ -329,11 +360,17 @@ internal class CoreTakina(
         setTransportLifecycleId(jid, lifecycleId)
 
         return runCatching {
-            val session = transport.connect(account.passwordProvider()) { phase ->
-                val to = phase.toConnectionState()
-                val error = transition(jid, machine, to)
-                if (error != null) throw TakinaFailureException(error)
-            }
+            val session = transport.connect(
+                password = account.passwordProvider(),
+                onPhase = { phase ->
+                    val to = phase.toConnectionState()
+                    val error = transition(jid, machine, to)
+                    if (error != null) throw TakinaFailureException(error)
+                },
+                preBindNegotiation = { featuresXml, preBindTransport ->
+                    runPreBindNegotiationHooks(jid, featuresXml, preBindTransport)
+                },
+            )
             val establishedError = transition(jid, machine, ConnectionState.ESTABLISHED)
             if (establishedError != null) throw TakinaFailureException(establishedError)
             sessions[jid] = session
@@ -359,7 +396,7 @@ internal class CoreTakina(
         }
     }
 
-    override suspend fun disconnect(jid: BareJid): TakinaResult<Unit> {
+    private suspend fun disconnectInternal(jid: BareJid): TakinaResult<Unit> {
         val correlationId = IdsUtils.newPrefixedId("disc")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
@@ -412,7 +449,7 @@ internal class CoreTakina(
         }
     }
 
-    override suspend fun connectAll(): TakinaResult<BatchExecutionOutcome> {
+    private suspend fun connectAllInternal(): TakinaResult<BatchExecutionOutcome> {
         val correlationId = IdsUtils.newPrefixedId("conn-all")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
@@ -445,7 +482,7 @@ internal class CoreTakina(
         }
     }
 
-    override suspend fun disconnectAll(): TakinaResult<BatchExecutionOutcome> {
+    private suspend fun disconnectAllInternal(): TakinaResult<BatchExecutionOutcome> {
         val correlationId = IdsUtils.newPrefixedId("disc-all")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
@@ -489,8 +526,7 @@ internal class CoreTakina(
         events.emit(TakinaShutdownCompletedEvent())
     }
 
-    // HACK：这几个是不是不建议在这里构建吧，没准未来解耦？
-    override suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome> {
+    private suspend fun sendMessageInternal(request: MessageRequest): TakinaResult<MessageOutcome> {
         val correlationId = request.messageId
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
@@ -535,6 +571,7 @@ internal class CoreTakina(
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.MESSAGE))
 
             connection.transport.sendRaw(processed)
+            notifyBusinessOutboundSent(owner, processed)
             events.emit(MessageSentEvent(owner = owner, to = request.to, body = request.body))
             okResult(MessageOutcome(request.messageId), correlationId, mark)
         }.getOrElse { failure ->
@@ -550,7 +587,7 @@ internal class CoreTakina(
         }
     }
 
-    override suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome> {
+    private suspend fun sendPresenceInternal(request: PresenceRequest): TakinaResult<PresenceOutcome> {
         val correlationId = IdsUtils.newPrefixedId("presence")
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
@@ -592,6 +629,7 @@ internal class CoreTakina(
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.PRESENCE))
 
             connection.transport.sendRaw(processed)
+            notifyBusinessOutboundSent(owner, processed)
             okResult(PresenceOutcome(), correlationId, mark)
         }.getOrElse { failure ->
             val error = failure.toTakinaError(
@@ -605,7 +643,7 @@ internal class CoreTakina(
         }
     }
 
-    override suspend fun sendIq(request: IqRequest): TakinaResult<IqOutcome> {
+    private suspend fun sendIqInternal(request: IqRequest): TakinaResult<IqOutcome> {
         val correlationId = request.id
         val mark = TimeSource.Monotonic.markNow()
         inactiveErrorOrNull()?.let { error ->
@@ -647,6 +685,7 @@ internal class CoreTakina(
             events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = OutboundClassification.BUSINESS, source = OutboundSources.IQ))
 
             connection.transport.sendRaw(processed)
+            notifyBusinessOutboundSent(owner, processed)
             okResult(IqOutcome(request.id), correlationId, mark)
         }.getOrElse { failure ->
             val error = failure.toTakinaError(
@@ -680,6 +719,7 @@ internal class CoreTakina(
                     reason = result.rejectedReason,
                 ),
             )
+
             result.applied -> events.emit(ConfigAppliedEvent(eventPath, result.applyMode.name))
             else -> events.emit(ConfigApplyDeferredEvent(eventPath, result.applyMode.name))
         }
@@ -703,8 +743,7 @@ internal class CoreTakina(
         val machine = stateMachines[owner] ?: return
         runtime.setAccountState(owner, AccountState.DEGRADED)
         events.emit(UnexpectedDisconnectedEvent(owner, reason))
-
-        // TODO：要在这里加个插件回调钩子，如果插件（如SM）处理成功，则不触发FinalReconnect。可能也要加发一个原始断连事件？
+        if (runUnexpectedDisconnectHooks(owner, reason, authHardFailure)) return
 
         val finalReconnect = FinalReconnect(
             onSchedule = { attempt, delay ->
@@ -731,13 +770,72 @@ internal class CoreTakina(
         }
     }
 
+    private suspend fun runUnexpectedDisconnectHooks(owner: BareJid, reason: String?, authHardFailure: Boolean): Boolean {
+        val context = UnexpectedDisconnectContext(
+            owner = owner,
+            reason = reason,
+            authHardFailure = authHardFailure,
+        )
+        for (contribution in unexpectedDisconnectHooks) {
+            if (!isFeatureEnabledForOwner(contribution.provider, owner)) continue
+            val handled = runCatching { contribution.contribution.onUnexpectedDisconnect(context) }
+                .getOrElse { failure ->
+                    val error = failure.toTakinaError(
+                        domain = ErrorDomain.FEATURE,
+                        number = 212,
+                        retryable = true,
+                        fallbackMessage = failure.message ?: "Unexpected disconnect hook failed",
+                    )
+                    events.emit(RequestFailedEvent(owner, CoreRequestTypes.REQUEST_ROUTING, error))
+                    UnexpectedDisconnectHandling.NOT_HANDLED
+                }
+            if (handled == UnexpectedDisconnectHandling.HANDLED) return true
+        }
+        return false
+    }
+
+    private suspend fun runPreBindNegotiationHooks(
+        owner: BareJid,
+        featuresXml: String,
+        transport: XmppPreBindTransport,
+    ): XmppPreBindNegotiationDecision {
+        val transportBridge = object : PreBindNegotiationTransport {
+            override suspend fun sendRawFrame(xml: String) = transport.sendRawFrame(xml)
+
+            override suspend fun readFrame(): String? = transport.readFrame()
+        }
+
+        val context = PreBindNegotiationContext(
+            owner = owner,
+            featuresXml = featuresXml,
+            transport = transportBridge,
+        )
+        for (contribution in preBindHooks) {
+            if (!isFeatureEnabledForOwner(contribution.provider, owner)) continue
+            val decision = runCatching { contribution.contribution.onPreBind(context) }.getOrElse { failure ->
+                val error = failure.toTakinaError(
+                    domain = ErrorDomain.FEATURE,
+                    number = 213,
+                    retryable = true,
+                    fallbackMessage = failure.message ?: "Pre-bind hook failed",
+                )
+                events.emit(RequestFailedEvent(owner, CoreRequestTypes.CONNECT, error))
+                PreBindNegotiationDecision.ContinueToBind
+            }
+            if (decision is PreBindNegotiationDecision.ResumeSucceeded) {
+                return XmppPreBindNegotiationDecision.ResumeSucceeded(boundJid = decision.boundJid)
+            }
+        }
+        return XmppPreBindNegotiationDecision.ProceedToBind
+    }
+
     private fun transportCallbacksFor(owner: BareJid, lifecycleId: String): XmppTransportCallbacks {
         val machine = requireNotNull(stateMachines[owner]) { "State machine not found for owner $owner" }
 
         return object : XmppTransportCallbacks {
             override suspend fun onFrame(frame: String) {
                 if (currentTransportLifecycleId(owner) != lifecycleId) return
-                handleInboundFrame(owner, frame)
+                inboundOperations.handle(owner, frame)
             }
 
             override suspend fun onFrameParseFailed(raw: String, reason: String) {
@@ -768,12 +866,12 @@ internal class CoreTakina(
         transportLifecycleIds.update { current -> current - owner }
     }
 
-    private suspend fun handleInboundFrame(owner: BareJid, frame: String) {
+    private suspend fun handleInboundFrameInternal(owner: BareJid, frame: String) {
         events.emit(RawFrameInboundEvent(owner = owner, xml = frame))
 
         unifiedPolicy.onNextItemBoundary()
-        val classification = classifyInbound(frame)
         val scope = Scope.Account(owner)
+        val classification = pipelineRuntime.classifyInbound(frame, scope)
         val processed = pipelineRuntime.executeInbound(
             frame = InboundFrame(raw = frame, classification = classification, owner = owner),
             scope = scope,
@@ -782,6 +880,7 @@ internal class CoreTakina(
 
         when (classification) {
             InboundClassification.STANZA_MESSAGE -> {
+                notifyInboundStanzaHandled(owner, classification, processed)
                 if (parsed == null) {
                     events.emit(FrameInboundParseFailedEvent(owner = owner, raw = processed, reason = "Invalid message stanza XML"))
                     return
@@ -792,6 +891,7 @@ internal class CoreTakina(
             }
 
             InboundClassification.STANZA_PRESENCE -> {
+                notifyInboundStanzaHandled(owner, classification, processed)
                 if (parsed == null) {
                     events.emit(FrameInboundParseFailedEvent(owner = owner, raw = processed, reason = "Invalid presence stanza XML"))
                     return
@@ -801,6 +901,7 @@ internal class CoreTakina(
             }
 
             InboundClassification.STANZA_IQ -> {
+                notifyInboundStanzaHandled(owner, classification, processed)
                 if (parsed == null) {
                     events.emit(FrameInboundParseFailedEvent(owner = owner, raw = processed, reason = "Invalid iq stanza XML"))
                     return
@@ -812,6 +913,91 @@ internal class CoreTakina(
             InboundClassification.UNKNOWN -> events.emit(UnknownFrameInboundEvent(owner = owner, raw = processed))
 
             else -> Unit
+        }
+    }
+
+    internal fun sessionBoundJidOrNull(owner: BareJid): String? = sessions[owner]?.boundJid
+
+    internal suspend fun sendFeatureControlFrame(owner: BareJid, xml: String, source: String): Boolean =
+        sendFeatureFrame(owner, xml, OutboundClassification.CONTROL, source, notifyOutboundObservers = false)
+
+    internal suspend fun sendFeatureBusinessReplayFrame(owner: BareJid, xml: String, source: String): Boolean =
+        sendFeatureFrame(owner, xml, OutboundClassification.BUSINESS, source, notifyOutboundObservers = false)
+
+    private suspend fun sendFeatureFrame(
+        owner: BareJid,
+        xml: String,
+        classification: OutboundClassification,
+        source: String,
+        notifyOutboundObservers: Boolean,
+    ): Boolean {
+        val (connection, transportError) = connectedTransportOrError(owner)
+        if (transportError != null || connection == null) {
+            events.emit(
+                RequestFailedEvent(
+                    owner, CoreRequestTypes.REQUEST_ROUTING, transportError ?: TakinaErrors.of(
+                        domain = ErrorDomain.INTERNAL,
+                        number = 907,
+                        message = "Transport resolution failed",
+                        retryable = false,
+                    )
+                )
+            )
+            return false
+        }
+
+        val scope = Scope.Account(owner)
+        val processed = pipelineRuntime.executeOutbound(
+            OutboundFrame(raw = xml, classification = classification, owner = owner),
+            scope = scope,
+        ) ?: return false
+
+        return runCatching {
+            events.emit(FinalFrameOutboundEvent(owner = owner, xml = processed, classification = classification, source = source))
+            connection.transport.sendRaw(processed)
+            if (notifyOutboundObservers && classification == OutboundClassification.BUSINESS) {
+                notifyBusinessOutboundSent(owner, processed)
+            }
+            true
+        }.getOrElse { failure ->
+            val error = failure.toTakinaError(
+                domain = ErrorDomain.TRANSPORT,
+                number = 107,
+                retryable = true,
+                fallbackMessage = failure.message ?: "feature frame send failed",
+            )
+            events.emit(RequestFailedEvent(owner, CoreRequestTypes.REQUEST_ROUTING, error))
+            false
+        }
+    }
+
+    private suspend fun notifyBusinessOutboundSent(owner: BareJid, xml: String) {
+        outboundBusinessObservers.forEach { contribution ->
+            if (!isFeatureEnabledForOwner(contribution.provider, owner)) return@forEach
+            runCatching { contribution.contribution.onBusinessFrameSent(owner, xml) }.onFailure { failure ->
+                val error = failure.toTakinaError(
+                    domain = ErrorDomain.FEATURE,
+                    number = 210,
+                    retryable = true,
+                    fallbackMessage = failure.message ?: "Feature outbound observer failed",
+                )
+                events.emit(RequestFailedEvent(owner, CoreRequestTypes.MESSAGE, error))
+            }
+        }
+    }
+
+    private suspend fun notifyInboundStanzaHandled(owner: BareJid, classification: InboundClassification, xml: String) {
+        inboundStanzaObservers.forEach { contribution ->
+            if (!isFeatureEnabledForOwner(contribution.provider, owner)) return@forEach
+            runCatching { contribution.contribution.onInboundStanzaHandled(owner, classification, xml) }.onFailure { failure ->
+                val error = failure.toTakinaError(
+                    domain = ErrorDomain.FEATURE,
+                    number = 211,
+                    retryable = true,
+                    fallbackMessage = failure.message ?: "Feature inbound observer failed",
+                )
+                events.emit(RequestFailedEvent(owner, CoreRequestTypes.REQUEST_ROUTING, error))
+            }
         }
     }
 
@@ -837,10 +1023,9 @@ internal class CoreTakina(
         }
         runtime.setConnectionState(owner, next)
         runBlocking {
-            installedFeatures.forEach { installed ->
-                installed.feature.lifecycleHooks().forEach { hook ->
-                    hook.onConnectionStateChanged(owner, result.from, result.to)
-                }
+            lifecycleHooks.forEach { contribution ->
+                if (!isFeatureEnabledForOwner(contribution.provider, owner)) return@forEach
+                contribution.contribution.onConnectionStateChanged(owner, result.from, result.to)
             }
         }
         events.emit(ConnectionStateChangedEvent(owner, result.from, result.to))
@@ -882,6 +1067,7 @@ internal class CoreTakina(
         XmppConnectPhase.TLS_HANDSHAKING -> ConnectionState.TLS_HANDSHAKING
         XmppConnectPhase.STREAM_OPENING -> ConnectionState.STREAM_OPENING
         XmppConnectPhase.AUTHENTICATING -> ConnectionState.AUTHENTICATING
+        XmppConnectPhase.PRE_BIND_NEGOTIATING -> ConnectionState.RESUMING_SM
         XmppConnectPhase.BINDING_RESOURCE -> ConnectionState.BINDING_RESOURCE
     }
 
@@ -916,10 +1102,32 @@ internal class CoreTakina(
         }
     }
 
-    private fun resolvePresetFeatures(featurePreset: FeaturePreset): List<InstalledFeature> = when (featurePreset) {
-        FeaturePreset.Minimal -> emptyList()
-        FeaturePreset.Recommended -> emptyList()
-        FeaturePreset.Full -> emptyList()
+    private fun resolvePresetFeatures(featurePreset: FeaturePreset): List<InstalledFeature> {
+        // TODO：未来改成一个常量合集，然后给功能打等级，最小>推荐>全部，要什么直接筛选返回
+        val recommended = listOf(InstalledFeature(StreamManagementFeature, StreamManagementFeature.create()))
+
+        return when (featurePreset) {
+            FeaturePreset.Minimal -> emptyList()
+            FeaturePreset.Recommended -> recommended
+            FeaturePreset.Full -> recommended + emptyList()
+        }
+    }
+
+    private inner class ConnectionOperations {
+        suspend fun connect(jid: BareJid): TakinaResult<Unit> = connectInternal(jid)
+        suspend fun disconnect(jid: BareJid): TakinaResult<Unit> = disconnectInternal(jid)
+        suspend fun connectAll(): TakinaResult<BatchExecutionOutcome> = connectAllInternal()
+        suspend fun disconnectAll(): TakinaResult<BatchExecutionOutcome> = disconnectAllInternal()
+    }
+
+    private inner class RequestOperations {
+        suspend fun sendMessage(request: MessageRequest): TakinaResult<MessageOutcome> = sendMessageInternal(request)
+        suspend fun sendPresence(request: PresenceRequest): TakinaResult<PresenceOutcome> = sendPresenceInternal(request)
+        suspend fun sendIq(request: IqRequest): TakinaResult<IqOutcome> = sendIqInternal(request)
+    }
+
+    private inner class InboundOperations {
+        suspend fun handle(owner: BareJid, frame: String) = handleInboundFrameInternal(owner, frame)
     }
 
     private fun inactiveErrorOrNull(): TakinaError? = if (started && !shutdown) {
@@ -953,6 +1161,9 @@ internal class CoreTakina(
 
     private fun isAuthHardFailure(error: TakinaError): Boolean = error.domain == ErrorDomain.AUTH && !error.retryable
 
+    private fun isFeatureEnabledForOwner(provider: TakinaFeatureProvider<*>, owner: BareJid): Boolean =
+        unifiedPolicy.explainFeature(provider, Scope.Account(owner)).enabled
+
     private fun AccountDefinition.getConnectionConfig(): ConnectionConfig {
         val mode = securityMode ?: ConnectionDefaults.SECURITY_MODE
 
@@ -968,3 +1179,4 @@ internal class CoreTakina(
         )
     }
 }
+

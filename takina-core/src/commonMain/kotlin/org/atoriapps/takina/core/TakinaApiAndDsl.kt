@@ -8,6 +8,7 @@ import org.atoriapps.takina.core.features.TakinaFeature
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
+import org.atoriapps.takina.core.pipeline.NodeOrderSpec
 
 @RequiresOptIn(level = RequiresOptIn.Level.WARNING)
 annotation class TakinaExperimentalApi
@@ -35,7 +36,7 @@ internal data class NodePolicyDraft(
     val nodeKey: String,
     val scope: Scope,
     val enabled: Boolean? = null,
-    val order: Int? = null,
+    val order: NodeOrderSpec? = null,
 )
 
 internal data class CapabilityDraft(
@@ -83,7 +84,7 @@ internal data class PendingNodePolicyDraft(
     val nodeKey: String,
     val scope: Scope?,
     val enabled: Boolean? = null,
-    val order: Int? = null,
+    val order: NodeOrderSpec? = null,
 )
 
 @TakinaDsl
@@ -401,7 +402,7 @@ class ConfigDsl internal constructor(
         dsl.alertThreshold?.let { set(CoreConfigCatalog.Observability.ALERT_THRESHOLD.path, it) }
     }
 
-    // TODO：我加密配置呢？即草案文档里的encryptionDsl
+    // TODO next：我加密配置呢？即草案文档里的encryptionDsl
 }
 
 internal fun Scope.enforceAccountScope(owner: BareJid, entry: String): Scope = when (this) {
@@ -538,7 +539,7 @@ class DirectionPolicyDsl internal constructor(
 @TakinaDsl
 class NodePolicyDsl {
     private var enabledProvider: (() -> Boolean?)? = null
-    private var orderProvider: (() -> Int?)? = null
+    private var orderProvider: (() -> NodeOrderSpec?)? = null
 
     var enabled: Boolean?
         get() = enabledProvider?.invoke()
@@ -546,17 +547,43 @@ class NodePolicyDsl {
             enabledProvider = { value }
         }
 
-    var order: Int?
+    val order: NodeOrderSpec?
         get() = orderProvider?.invoke()
-        set(value) {
-            orderProvider = { value }
-        }
 
     fun enabled(provider: () -> Boolean?) {
         enabledProvider = provider
     }
 
-    fun order(provider: () -> Int?) {
+    fun order(provider: () -> NodeOrderSpec?) {
         orderProvider = provider
+    }
+
+    fun order(init: NodeOrderDsl.() -> Unit) {
+        orderProvider = { NodeOrderDsl().apply(init).build() }
+    }
+}
+
+@TakinaDsl
+class NodeOrderDsl {
+    private val before = linkedSetOf<String>()
+    private val after = linkedSetOf<String>()
+
+    fun before(vararg nodeKeys: String) {
+        nodeKeys.forEach { key ->
+            require(key.isNotBlank()) { "before node key cannot be blank" }
+            before += key
+        }
+    }
+
+    fun after(vararg nodeKeys: String) {
+        nodeKeys.forEach { key ->
+            require(key.isNotBlank()) { "after node key cannot be blank" }
+            after += key
+        }
+    }
+
+    internal fun build(): NodeOrderSpec? {
+        if (before.isEmpty() && after.isEmpty()) return null
+        return NodeOrderSpec(before = before.toSet(), after = after.toSet())
     }
 }

@@ -67,7 +67,11 @@ internal class JvmXmppTransport(
         )
     }
 
-    override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession = withContext(Dispatchers.IO) {
+    override suspend fun connect(
+        password: String,
+        onPhase: suspend (XmppConnectPhase) -> Unit,
+        preBindNegotiation: suspend (featuresXml: String, transport: XmppPreBindTransport) -> XmppPreBindNegotiationDecision,
+    ): XmppSession = withContext(Dispatchers.IO) {
         val existingBoundJid = boundJid
 
         if (socket?.isConnected == true && socket?.isClosed == false && !existingBoundJid.isNullOrBlank()) return@withContext XmppSession(existingBoundJid)
@@ -102,6 +106,23 @@ internal class JvmXmppTransport(
 
             onPhase(XmppConnectPhase.STREAM_OPENING)
             features = openStreamAndReadFeatures()
+
+            onPhase(XmppConnectPhase.PRE_BIND_NEGOTIATING)
+            val preBindTransport = object : XmppPreBindTransport {
+                override suspend fun sendRawFrame(xml: String) = sendRaw(xml)
+
+                override suspend fun readFrame(): String? = withContext(Dispatchers.IO) { reader?.nextFrame() }
+            }
+            when (val decision = preBindNegotiation(XmlWriter.render(features), preBindTransport)) {
+                XmppPreBindNegotiationDecision.ProceedToBind -> Unit
+                is XmppPreBindNegotiationDecision.ResumeSucceeded -> {
+                    val session = XmppSession(boundJid = decision.boundJid)
+                    boundJid = session.boundJid
+                    startReadLoop()
+                    return@withContext session
+                }
+            }
+
             if (features.firstDescendant("bind") == null) fail(ErrorDomain.BIND, 201, "Server does not advertise resource binding", retryable = false)
 
             onPhase(XmppConnectPhase.BINDING_RESOURCE)

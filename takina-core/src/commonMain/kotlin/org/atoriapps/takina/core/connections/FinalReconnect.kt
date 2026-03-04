@@ -7,18 +7,6 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.random.Random
 
-@Deprecated("原因在下方HACK")
-enum class SmResumeResult {
-    SUCCESS,
-    FAILED,
-    NOT_ENABLED,
-}
-
-@Deprecated("原因在下方HACK")
-interface SmRecoveryCoordinator {
-    suspend fun tryResume(owner: BareJid): SmResumeResult
-}
-
 data class ReconnectPolicy(
     val enabled: Boolean = CoreConfigCatalog.Reconnect.ENABLED.default,
     val delayMillis: Long = CoreConfigCatalog.Reconnect.DELAY.default,
@@ -33,7 +21,6 @@ data class ReconnectOutcome(
 )
 
 class FinalReconnect(
-    // private val smRecoveryCoordinator: SmRecoveryCoordinator,
     private val onSchedule: suspend (attempt: Int, delayMillis: Long) -> Unit,
     private val connectAttempt: suspend () -> Boolean,
 ) {
@@ -44,13 +31,6 @@ class FinalReconnect(
     ): ReconnectOutcome {
         if (authHardFailure) return ReconnectOutcome(succeed = false, attempts = 0)
         if (!policy.enabled) return ReconnectOutcome(succeed = false, attempts = 0)
-
-        // HACK：但我觉得应该有个断连判断的钩子链（断连时触发，如果都没有处理，才走本方法，处理了就当做无事发生，且歌且舞），然后让SM实现钩子
-        /*when (smRecoveryCoordinator.tryResume(owner)) {
-            SmResumeResult.SUCCESS -> return ReconnectOutcome(resumedBySm = true, connected = true, attempts = 0)
-
-            SmResumeResult.FAILED, SmResumeResult.NOT_ENABLED -> Unit
-        }*/
 
         var attempts = 0
         while (attempts < policy.maxAttempts) {

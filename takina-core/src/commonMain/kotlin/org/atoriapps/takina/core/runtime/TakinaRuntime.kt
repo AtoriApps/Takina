@@ -19,7 +19,6 @@ data class RuntimeHealth(
     val failedAccounts: Int = 0,
 )
 
-// TODO：还有什么可以放进Rt，这里面已有的有什么用？
 class TakinaRuntime(
     private val unifiedPolicy: UnifiedPolicy,
     private val pipelineRuntime: PipelineRuntime,

@@ -15,6 +15,8 @@ import kotlin.test.assertTrue
 import org.atoriapps.takina.core.connections.AccountState
 import org.atoriapps.takina.core.connections.ConnectionConfig
 import org.atoriapps.takina.core.connections.ConnectionState
+import org.atoriapps.takina.core.connections.XmppPreBindNegotiationDecision
+import org.atoriapps.takina.core.connections.XmppPreBindTransport
 import org.atoriapps.takina.core.connections.XmppConnectPhase
 import org.atoriapps.takina.core.connections.XmppSession
 import org.atoriapps.takina.core.connections.XmppTransport
@@ -66,7 +68,7 @@ class CoreSemanticsTest {
         private val config: ConnectionConfig,
         private val sentSink: MutableList<String>,
     ) : XmppTransport {
-        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit, preBindNegotiation: suspend (String, XmppPreBindTransport) -> XmppPreBindNegotiationDecision): XmppSession {
             onPhase(XmppConnectPhase.TCP_CONNECTING)
             onPhase(XmppConnectPhase.STREAM_OPENING)
             onPhase(XmppConnectPhase.AUTHENTICATING)
@@ -115,7 +117,7 @@ class CoreSemanticsTest {
         private val config: ConnectionConfig,
         private val callbacks: XmppTransportCallbacks,
     ) : XmppTransport {
-        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+        override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit, preBindNegotiation: suspend (String, XmppPreBindTransport) -> XmppPreBindNegotiationDecision): XmppSession {
             onPhase(XmppConnectPhase.TCP_CONNECTING)
             onPhase(XmppConnectPhase.STREAM_OPENING)
             onPhase(XmppConnectPhase.AUTHENTICATING)
@@ -283,7 +285,7 @@ class CoreSemanticsTest {
         val oldFactory = XmppTransportFactoryRegistry.factory
         XmppTransportFactoryRegistry.factory = { _, callbacks ->
             object : XmppTransport {
-                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit, preBindNegotiation: suspend (String, XmppPreBindTransport) -> XmppPreBindNegotiationDecision): XmppSession {
                     onPhase(XmppConnectPhase.TCP_CONNECTING)
                     throw TakinaFailureException(
                         TakinaErrors.of(
@@ -437,7 +439,7 @@ class CoreSemanticsTest {
         val oldFactory = XmppTransportFactoryRegistry.factory
         XmppTransportFactoryRegistry.factory = { config, callbacks ->
             object : XmppTransport {
-                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit, preBindNegotiation: suspend (String, XmppPreBindTransport) -> XmppPreBindNegotiationDecision): XmppSession {
                     if (config.owner == carol) error("forced connect failure")
                     onPhase(XmppConnectPhase.TCP_CONNECTING)
                     onPhase(XmppConnectPhase.STREAM_OPENING)
@@ -488,7 +490,7 @@ class CoreSemanticsTest {
         val oldFactory = XmppTransportFactoryRegistry.factory
         XmppTransportFactoryRegistry.factory = { config, callbacks ->
             object : XmppTransport {
-                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit, preBindNegotiation: suspend (String, XmppPreBindTransport) -> XmppPreBindNegotiationDecision): XmppSession {
                     onPhase(XmppConnectPhase.TCP_CONNECTING)
                     onPhase(XmppConnectPhase.STREAM_OPENING)
                     onPhase(XmppConnectPhase.AUTHENTICATING)
@@ -533,7 +535,7 @@ class CoreSemanticsTest {
         val oldFactory = XmppTransportFactoryRegistry.factory
         XmppTransportFactoryRegistry.factory = { config, callbacks ->
             object : XmppTransport {
-                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit): XmppSession {
+                override suspend fun connect(password: String, onPhase: suspend (XmppConnectPhase) -> Unit, preBindNegotiation: suspend (String, XmppPreBindTransport) -> XmppPreBindNegotiationDecision): XmppSession {
                     onPhase(XmppConnectPhase.TCP_CONNECTING)
                     onPhase(XmppConnectPhase.STREAM_OPENING)
                     onPhase(XmppConnectPhase.AUTHENTICATING)
@@ -572,3 +574,4 @@ class CoreSemanticsTest {
         }
     }
 }
+

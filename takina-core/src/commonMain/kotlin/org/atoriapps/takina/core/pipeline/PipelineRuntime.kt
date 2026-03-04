@@ -5,11 +5,11 @@ import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.TimeSource
 import kotlin.coroutines.cancellation.CancellationException
 import org.atoriapps.takina.core.controlling.UnifiedPolicy
+import org.atoriapps.takina.core.features.ControlInboundNode
+import org.atoriapps.takina.core.features.InboundFrameClaimer
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.BareJid
 import org.atoriapps.takina.core.models.Scope
-
-// TODO、CHECK：管线about的前后依赖型排序好像没做，另外这个API（about）是否要更名？另外这里面是不是也有Key？再看看
 
 data class PipelineNodeFailure(
     val nodeKey: String,
@@ -22,6 +22,11 @@ class PipelineRuntime(
     private val unifiedPolicy: UnifiedPolicy,
     private val onNodeFailure: ((PipelineNodeFailure) -> Unit)? = null,
 ) {
+    private data class InboundClaimerRegistration(
+        val claimer: InboundFrameClaimer,
+        val featureProvider: TakinaFeatureProvider<*>?,
+    )
+
     private data class InboundRegistration(
         val node: InboundNode,
         val featureProvider: TakinaFeatureProvider<*>?,
@@ -44,6 +49,7 @@ class PipelineRuntime(
 
     private val inboundNodes = mutableListOf<InboundRegistration>()
     private val outboundNodes = mutableListOf<OutboundRegistration>()
+    private val inboundClaimers = mutableListOf<InboundClaimerRegistration>()
     private val nodeMetrics = mutableMapOf<String, MutableMetrics>()
 
     fun registerInboundNode(
@@ -51,7 +57,11 @@ class PipelineRuntime(
         featureProvider: TakinaFeatureProvider<*>? = null,
         controlOnly: Boolean = false,
     ) {
-        inboundNodes += InboundRegistration(node = node, featureProvider = featureProvider, controlOnly = controlOnly)
+        inboundNodes += InboundRegistration(
+            node = node,
+            featureProvider = featureProvider,
+            controlOnly = controlOnly || node is ControlInboundNode,
+        )
     }
 
     fun registerOutboundNode(
@@ -66,6 +76,26 @@ class PipelineRuntime(
             controlOnly = controlOnly,
             userCustom = userCustom,
         )
+    }
+
+    fun registerInboundClaimer(
+        claimer: InboundFrameClaimer,
+        featureProvider: TakinaFeatureProvider<*>? = null,
+    ) {
+        inboundClaimers += InboundClaimerRegistration(claimer = claimer, featureProvider = featureProvider)
+    }
+
+    fun classifyInbound(raw: String, scope: Scope): InboundClassification {
+        val builtin = classifyInbound(raw)
+        if (builtin != InboundClassification.UNKNOWN) return builtin
+
+        for (registration in inboundClaimers) {
+            val provider = registration.featureProvider
+            if (provider != null && !unifiedPolicy.explainFeature(provider, scope).enabled) continue
+            val claimed = registration.claimer.claim(raw)
+            if (claimed != null) return claimed
+        }
+        return InboundClassification.UNKNOWN
     }
 
     suspend fun executeInbound(frame: InboundFrame, scope: Scope): String? {

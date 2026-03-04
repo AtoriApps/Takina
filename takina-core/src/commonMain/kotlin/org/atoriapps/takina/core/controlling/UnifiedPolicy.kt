@@ -1,9 +1,10 @@
 package org.atoriapps.takina.core.controlling
 
-import org.atoriapps.takina.core.features.FeatureRegistry
+import org.atoriapps.takina.core.features.InstalledFeatures
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.fallbackChain
+import org.atoriapps.takina.core.pipeline.NodeOrderSpec
 
 data class ExplainResult(
     val target: String,
@@ -29,7 +30,7 @@ data class NodeActivationState(
 )
 
 class UnifiedPolicy(
-    private val featureRegistry: FeatureRegistry,
+    private val installedFeatures: InstalledFeatures,
     private val configCatalog: Map<String, ConfigSpec<*>> = CoreConfigCatalog.all,
 ) {
     private data object UnsetMarker
@@ -46,7 +47,7 @@ class UnifiedPolicy(
 
     private val featureToggles = mutableMapOf<TakinaFeatureProvider<*>, MutableMap<Scope, Boolean>>()
     private val nodeToggles = mutableMapOf<String, MutableMap<Scope, Boolean>>()
-    private val nodeOrders = mutableMapOf<String, MutableMap<Scope, Int>>()
+    private val nodeOrders = mutableMapOf<String, MutableMap<Scope, NodeOrderSpec>>()
 
     private val activeConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
     private val nextItemConfig = mutableMapOf<String, MutableMap<Scope, Any?>>()
@@ -60,7 +61,7 @@ class UnifiedPolicy(
         nodeToggles.getOrPut(nodeKey) { linkedMapOf() }[scope] = enabled
     }
 
-    fun setNodeOrder(nodeKey: String, scope: Scope, order: Int) {
+    fun setNodeOrder(nodeKey: String, scope: Scope, order: NodeOrderSpec) {
         nodeOrders.getOrPut(nodeKey) { linkedMapOf() }[scope] = order
     }
 
@@ -171,7 +172,7 @@ class UnifiedPolicy(
         return current ?: spec.default
     }
 
-    fun describeActiveFeatures(scope: Scope): List<FeatureActivation> = featureRegistry.all().map { feature ->
+    fun describeActiveFeatures(scope: Scope): List<FeatureActivation> = installedFeatures.all().map { feature ->
         val explained = isFeatureEnabled(feature.provider, scope)
         FeatureActivation(
             featureId = feature.provider.id,
@@ -183,7 +184,7 @@ class UnifiedPolicy(
     fun explainFeature(provider: TakinaFeatureProvider<*>, scope: Scope): ExplainResult = isFeatureEnabled(provider, scope)
 
     fun explainFeature(featureId: String, scope: Scope): ExplainResult {
-        val provider = featureRegistry.installedById(featureId)?.provider ?: return ExplainResult(
+        val provider = installedFeatures.installedById(featureId)?.provider ?: return ExplainResult(
             target = featureId,
             scope = scope,
             installed = false,
@@ -212,7 +213,6 @@ class UnifiedPolicy(
                     installed = installed,
                     enabled = false,
                     reasonChain = reason + featureResult.reasonChain,
-                    order = resolveNodeOrder(nodeKey, scope),
                 )
             }
         }
@@ -228,7 +228,6 @@ class UnifiedPolicy(
                     installed = installed,
                     enabled = value,
                     reasonChain = reason,
-                    order = resolveNodeOrder(nodeKey, scope),
                 )
             }
         }
@@ -240,14 +239,7 @@ class UnifiedPolicy(
             installed = installed,
             enabled = true,
             reasonChain = reason,
-            order = resolveNodeOrder(nodeKey, scope),
         )
-    }
-
-    fun resolveNodeOrder(nodeKey: String, scope: Scope): Int {
-        val chain = scope.fallbackChain()
-        for (s in chain) nodeOrders[nodeKey]?.get(s)?.let { return it }
-        return 0
     }
 
     fun sortNodesWithVisibilityConflict(
@@ -255,30 +247,87 @@ class UnifiedPolicy(
         featureProviderOfNode: (String) -> TakinaFeatureProvider<*>?,
         scope: Scope,
     ): List<NodeActivationState> {
-        val states = nodeKeys.map { node ->
+        val states = nodeKeys.distinct().map { node ->
             val explain = explainNode(node, featureProviderOfNode(node), scope)
             NodeActivationState(
                 nodeKey = node,
                 enabled = explain.enabled,
-                order = explain.order ?: 0,
+                order = 0,
                 explanation = explain,
             )
         }
-        val enabled = states.filter { it.enabled }
-        val duplicates = enabled.groupBy { it.order }.filterValues { it.size > 1 }.keys
-        return states.sortedWith(compareBy<NodeActivationState> { it.order }.thenBy { it.nodeKey }).map {
-            if (it.order in duplicates) {
-                it.copy(
-                    explanation = it.explanation.copy(
-                        reasonChain = it.explanation.reasonChain + "order-conflict-visible:order=${it.order}",
-                    ),
-                )
-            } else it
+        val byKey = states.associateBy { it.nodeKey }
+        val indegree = states.associate { it.nodeKey to 0 }.toMutableMap()
+        val outgoing = states.associate { it.nodeKey to linkedSetOf<String>() }.toMutableMap()
+        val extraReasons = mutableMapOf<String, MutableList<String>>()
+
+        fun addReason(node: String, reason: String) {
+            extraReasons.getOrPut(node) { mutableListOf() } += reason
+        }
+
+        fun addEdge(from: String, to: String) {
+            val targets = outgoing.getValue(from)
+            if (to in targets) return
+            targets += to
+            indegree[to] = indegree.getValue(to) + 1
+        }
+
+        states.forEach { state ->
+            val spec = resolveNodeOrderSpec(state.nodeKey, scope)
+
+            spec.after.forEach { anchor ->
+                if (anchor !in byKey) {
+                    addReason(state.nodeKey, "order-anchor-missing:after=$anchor")
+                } else {
+                    addEdge(anchor, state.nodeKey)
+                }
+            }
+
+            spec.before.forEach { anchor ->
+                if (anchor !in byKey) {
+                    addReason(state.nodeKey, "order-anchor-missing:before=$anchor")
+                } else {
+                    addEdge(state.nodeKey, anchor)
+                }
+            }
+        }
+
+        val ready = indegree.filterValues { it == 0 }.keys.sorted().toMutableList()
+        val ordered = mutableListOf<String>()
+        while (ready.isNotEmpty()) {
+            val key = ready.removeAt(0)
+            ordered += key
+            outgoing.getValue(key).toList().sorted().forEach { target ->
+                val left = indegree.getValue(target) - 1
+                indegree[target] = left
+                if (left == 0) {
+                    ready += target
+                    ready.sort()
+                }
+            }
+        }
+
+        if (ordered.size != states.size) {
+            val cycled = states.map { it.nodeKey }.filter { it !in ordered.toSet() }.sorted()
+            ordered += cycled
+            cycled.forEach { addReason(it, "order-cycle-detected") }
+        }
+
+        return ordered.mapIndexed { index, key ->
+            val state = byKey.getValue(key)
+            val reasons = extraReasons[key].orEmpty()
+            state.copy(
+                order = index,
+                explanation = state.explanation.copy(
+                    order = index,
+                    reasonChain = state.explanation.reasonChain + reasons,
+                ),
+            )
         }
     }
 
     private fun isFeatureEnabled(provider: TakinaFeatureProvider<*>, scope: Scope): ExplainResult {
-        val feature = featureRegistry.get(provider) ?: return ExplainResult(
+        val feature = installedFeatures.get(provider) ?: return ExplainResult(
             target = provider.id,
             scope = scope,
             installed = false,
@@ -386,5 +435,13 @@ class UnifiedPolicy(
             }
             if (target.isEmpty()) into.remove(path)
         }
+    }
+
+    private fun resolveNodeOrderSpec(nodeKey: String, scope: Scope): NodeOrderSpec {
+        val chain = scope.fallbackChain()
+        for (candidate in chain) {
+            nodeOrders[nodeKey]?.get(candidate)?.let { return it }
+        }
+        return NodeOrderSpec.Empty
     }
 }

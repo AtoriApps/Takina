@@ -10,18 +10,19 @@ import org.atoriapps.takina.core.controlling.CoreConfigCatalog
 import org.atoriapps.takina.core.controlling.ConfigRejectCode
 import org.atoriapps.takina.core.controlling.ReconnectConfigPaths
 import org.atoriapps.takina.core.controlling.UnifiedPolicy
-import org.atoriapps.takina.core.features.FeatureRegistry
 import org.atoriapps.takina.core.features.InstalledFeature
+import org.atoriapps.takina.core.features.InstalledFeatures
 import org.atoriapps.takina.core.features.TakinaFeature
 import org.atoriapps.takina.core.features.TakinaFeatureProvider
 import org.atoriapps.takina.core.models.Scope
 import org.atoriapps.takina.core.models.ScopeKind
 import org.atoriapps.takina.core.models.toBareJid
+import org.atoriapps.takina.core.pipeline.NodeOrderSpec
 
 class UnifiedPolicyTest {
     private val omemoProvider = provider("omemo")
     private val omemo = feature()
-    private val registry = FeatureRegistry(listOf(InstalledFeature(omemoProvider, omemo)))
+    private val registry = InstalledFeatures(listOf(InstalledFeature(omemoProvider, omemo)))
     private val unifiedPolicy = UnifiedPolicy(registry)
     private val owner = "alice@example.com".toBareJid()
     private val peer = "bob@example.com".toBareJid()
@@ -37,11 +38,11 @@ class UnifiedPolicyTest {
     }
 
     @Test
-    fun `node order conflict is visible`() {
+    fun `node order cycle is visible`() {
         unifiedPolicy.setNodeEnabled("decrypt", Scope.Global, true)
         unifiedPolicy.setNodeEnabled("normalize", Scope.Global, true)
-        unifiedPolicy.setNodeOrder("decrypt", Scope.Global, 10)
-        unifiedPolicy.setNodeOrder("normalize", Scope.Global, 10)
+        unifiedPolicy.setNodeOrder("decrypt", Scope.Global, NodeOrderSpec(before = setOf("normalize")))
+        unifiedPolicy.setNodeOrder("normalize", Scope.Global, NodeOrderSpec(before = setOf("decrypt")))
 
         val sorted = unifiedPolicy.sortNodesWithVisibilityConflict(
             nodeKeys = listOf("decrypt", "normalize"),
@@ -49,7 +50,23 @@ class UnifiedPolicyTest {
             scope = Scope.Global,
         )
         assertEquals(2, sorted.size)
-        assertTrue(sorted.all { it.explanation.reasonChain.any { r -> r.contains("order-conflict-visible") } })
+        assertTrue(sorted.all { it.explanation.reasonChain.any { r -> r.contains("order-cycle-detected") } })
+    }
+
+    @Test
+    fun `relative node order honors before and after rules`() {
+        unifiedPolicy.setNodeEnabled("a", Scope.Global, true)
+        unifiedPolicy.setNodeEnabled("b", Scope.Global, true)
+        unifiedPolicy.setNodeEnabled("c", Scope.Global, true)
+        unifiedPolicy.setNodeOrder("a", Scope.Global, NodeOrderSpec(before = setOf("b")))
+        unifiedPolicy.setNodeOrder("c", Scope.Global, NodeOrderSpec(after = setOf("b")))
+
+        val sorted = unifiedPolicy.sortNodesWithVisibilityConflict(
+            nodeKeys = listOf("a", "b", "c"),
+            featureProviderOfNode = { null },
+            scope = Scope.Global,
+        )
+        assertEquals(listOf("a", "b", "c"), sorted.map { it.nodeKey })
     }
 
     @Test
